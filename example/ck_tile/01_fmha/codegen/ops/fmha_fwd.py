@@ -22,8 +22,8 @@ DTYPE_BITS = {
 }
 
 TILE_PARTITIONER_MAP = {
-    "shb" : "ck_tile::FmhaFwdTilePartitioner_SHB",
-    "hbs" : "ck_tile::FmhaFwdTilePartitioner_HBS",
+    "shb" : "ck_tile::FmhaFwdTilePartitioner_SHB", # lms: shb -> SeqLen, HeadNum, Batchsize
+    "hbs" : "ck_tile::FmhaFwdTilePartitioner_HBS", # lms: hbs -> HeadNum, Batchsize, SeqLen
 }
 
 FMHA_FWD_KERNEL_HEADER = """// SPDX-License-Identifier: MIT
