@@ -26,8 +26,7 @@ execute_process(
 
 execute_process(
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/generate.py
-  --api bwd --list_blobs ${CMAKE_CURRENT_BINARY_DIR}/bwd_blob_list.txt
-)
+  --api bwd --list_blobs ${CMAKE_CURRENT_BINARY_DIR}/bwd_blob_list.txt)
 
 # NOTE: for cmake, the FMHA_FWD_GEN_BLOBS/FMHA_BWD_GEN_BLOBS files must be in the same directory
 #       as current cmake list, otherwise will not figure out the dependency properly
@@ -38,19 +37,24 @@ add_custom_command(
   OUTPUT ${FMHA_FWD_GEN_BLOBS}
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/generate.py
   --api ${FMHA_FWD_APIS} --output_dir ${CMAKE_CURRENT_BINARY_DIR}
+  COMMENT "Generate fwd attention kernels!"
 )
+add_custom_target(FMHA_FWD_GEN_TASK DEPENDS ${FMHA_FWD_GEN_BLOBS})
 
 add_custom_command(
   OUTPUT ${FMHA_BWD_GEN_BLOBS}
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/generate.py
   --api bwd --output_dir ${CMAKE_CURRENT_BINARY_DIR}
+  COMMENT "Generate bwd attention kernels!"
 )
+add_custom_target(FMHA_BWD_GEN_TASK DEPENDS ${FMHA_BWD_GEN_BLOBS})
 
 set(EXAMPLE_FMHA_FWD "tile_example_fmha_fwd")
 # not using add_example_executable() to add this target, since we don't want this to have
 # to be included in "make all/install/check"
 message("adding example ${EXAMPLE_FMHA_FWD}")
 add_executable(${EXAMPLE_FMHA_FWD} EXCLUDE_FROM_ALL fmha_fwd.cpp)
+add_dependencies(${EXAMPLE_FMHA_FWD} FMHA_FWD_GEN_TASK)
 target_include_directories(${EXAMPLE_FMHA_FWD} PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 target_sources(${EXAMPLE_FMHA_FWD} PRIVATE ${FMHA_FWD_GEN_BLOBS})
 
@@ -59,6 +63,7 @@ set(EXAMPLE_FMHA_BWD "tile_example_fmha_bwd")
 # to be included in "make all/install/check"
 message("adding example ${EXAMPLE_FMHA_BWD}")
 add_executable(${EXAMPLE_FMHA_BWD} EXCLUDE_FROM_ALL fmha_bwd.cpp)
+add_dependencies(${EXAMPLE_FMHA_FWD} FMHA_BWD_GEN_TASK)
 target_include_directories(${EXAMPLE_FMHA_BWD} PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 target_sources(${EXAMPLE_FMHA_BWD} PRIVATE ${FMHA_BWD_GEN_BLOBS})
 

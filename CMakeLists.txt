@@ -26,7 +26,9 @@ set(version 1.1.0)
 project(composable_kernel VERSION ${version} LANGUAGES CXX HIP)
 include(CTest)
 
-find_package(Python3 3.6 COMPONENTS Interpreter REQUIRED)
+# find_package(Python3 3.6 COMPONENTS Interpreter REQUIRED)
+set(Python3_FIND_STRATEGY LOCATION)
+find_package(Python3 COMPONENTS Interpreter Development)
 
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 
