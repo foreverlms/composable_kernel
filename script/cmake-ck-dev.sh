@@ -1,7 +1,7 @@
 #!/bin/bash
-rm -f CMakeCache.txt
-rm -f *.cmake
-rm -rf CMakeFiles
+# rm -f CMakeCache.txt
+# rm -f *.cmake
+# rm -rf CMakeFiles
 
 MY_PROJECT_SOURCE=$1
 

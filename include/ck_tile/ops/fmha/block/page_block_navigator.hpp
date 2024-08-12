@@ -224,6 +224,8 @@ struct PageBlockNavigator
     CK_TILE_HOST_DEVICE
     DataType* get_block_ptr(index_t block_index) const
     {
+        // lms: cached blocks of sequence has shape [num_blocks, nheads, block_size, head_dim], this returns 
+        // the `block_index` block ptr of head i.
         return physical_blocks + physical_block_indices[block_index] * block_stride + fixed_offset;
     }
 

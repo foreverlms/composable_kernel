@@ -103,7 +103,7 @@ auto create_args(int argc, char* argv[])
                 "causal, positive is swa\n"
                 "'g:y,x', generic attention mask coordinate with y/x size (only debug purpose for "
                 "now)")
-        .insert("vlayout", "r", "r for row-major(seqlen*hdim), c for col-major(hdim*seqlen)")
+        .insert("vlayout", "r", "r for row-major(seqlen*hdim), c for col-major(hdim*seqlen)") // lms: only for V?
         .insert("lse", "0", "0 not store lse, 1 store lse")
         .insert("kname", "0", "if set to 1 will print kernel name")
         .insert("init",
@@ -284,6 +284,7 @@ bool run(const ck_tile::ArgParser& arg_parser)
         hdim_v = hdim_q;
 
     ck_tile::index_t seqlen_knew = arg_parser.get_int("s_knew");
+    printf("LMS:seqlen_knew : %d\n", seqlen_knew);
 #if !(CK_TILE_FMHA_FWD_APPENDKV_API && CK_TILE_FMHA_FWD_SPLITKV_API)
     if(seqlen_knew != 0)
     {
@@ -574,8 +575,9 @@ bool run(const ck_tile::ArgParser& arg_parser)
         get_lengths(i_perm, shape_batch, nhead, shape_seqlen_q, hdim_q));
     ck_tile::HostTensor<KDataType> k_host(
         0 < page_block_size
-            ? get_lengths(i_perm, max_num_page_blocks, nhead_k, page_block_size, hdim_q)
+            ? get_lengths(i_perm, max_num_page_blocks, nhead_k, page_block_size, hdim_q) // lms: this is not same as flash: [num_blocks, paged_block_size, nheads, hdim_q]
             : get_lengths(i_perm, shape_batch, nhead_k, shape_seqlen_k, hdim_q));
+
     /// NOTICE: always use same shape for knew_host & vnew_host in batch/group mode
     ck_tile::HostTensor<KDataType> knew_host(
         0 < seqlen_knew

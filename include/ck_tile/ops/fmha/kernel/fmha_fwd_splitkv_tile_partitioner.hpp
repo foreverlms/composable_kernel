@@ -24,9 +24,10 @@ struct FmhaFwdSplitKVTilePartitioner
                                             ck_tile::index_t hdim_v,
                                             ck_tile::index_t num_splits)
     {
+        // lms: This decides the kernel launch parameter
         // TODO: this may need tuning
         return dim3(ck_tile::integer_divide_ceil(seqlen_q, kM0) *
-                        ck_tile::integer_divide_ceil(hdim_v, kN1),
+                        ck_tile::integer_divide_ceil(hdim_v, kN1), // lms: this means division on head_dim???
                     nhead * num_splits,
                     batch_size);
     }
@@ -42,9 +43,9 @@ struct FmhaFwdSplitKVTilePartitioner
             return ck_tile::make_tuple(quotient, modulus);
         };
 
-        const auto [i_tile_m, i_tile_n] = f(blockIdx.x, num_tile_n1);
-        const auto [i_nhead, i_split]   = f(blockIdx.y, num_splits);
-        const index_t i_batch           = blockIdx.z;
+        const auto [i_tile_m, i_tile_n] = f(blockIdx.x, num_tile_n1);  // lms: tile_m -> block index in seqlen_q; tile_n -> index in v dim
+        const auto [i_nhead, i_split]   = f(blockIdx.y, num_splits); // lms: n_head -> head index; i_split -> split index in seqlen_k
+        const index_t i_batch           = blockIdx.z; // lms: batch index
 
         return ck_tile::make_tuple(i_tile_m, i_tile_n, i_split, i_nhead, i_batch);
     }

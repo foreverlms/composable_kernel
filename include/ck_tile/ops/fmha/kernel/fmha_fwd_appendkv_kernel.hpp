@@ -277,6 +277,8 @@ struct FmhaFwdAppendKVKernel
         auto k_page_block_navigator = [&, i_batch_ = i_batch, i_nhead_ = i_nhead]() {
             if constexpr(kIsPagedKV)
             {
+                // block_table [batch_size, max_num_blocks_of_seq]
+                // k_cache: 
                 const auto* block_indices =
                     reinterpret_cast<const int32_t*>(kargs.block_table_ptr) +
                     i_batch_ * kargs.batch_stride_block_table;
@@ -308,6 +310,16 @@ struct FmhaFwdAppendKVKernel
                     i_batch_ * kargs.batch_stride_block_table;
                 const index_t num_blocks =
                     integer_divide_ceil(kargs.seqlen_k + kargs.seqlen_knew, kargs.page_block_size);
+
+                // DEVICE_DEBUG_STMTS
+                // {
+                //     printf("[DEVICE] block_indics: ");
+                //     for(index_t i_block = 0; i_block < num_blocks; ++i_block)
+                //     {
+                //         printf("(%d, %d) ", i_block, block_indices[i_block]);
+                //     }
+                //     printf("\n");
+                // }
 
                 const long_index_t fixed_offset =
                     static_cast<long_index_t>(i_nhead_ / kargs.nhead_ratio_qk) *
@@ -358,7 +370,7 @@ struct FmhaFwdAppendKVKernel
 
             return pad_tensor_view(
                 q_dram_naive,
-                make_tuple(number<FmhaPipeline::kM0>{}, number<FmhaPipeline::kK0>{}),
+                make_tuple(number<FmhaPipeline::kM0>{}, number<FmhaPipeline::kK0>{}), // lms: q作为左矩阵，在row,col上的分块
                 sequence<kPadSeqLenQ, kPadHeadDimQ>{});
         }();
         const auto k_dram = [&]() {
@@ -616,7 +628,6 @@ struct FmhaFwdAppendKVKernel
             k_dram,
             make_tuple(number<FmhaPipeline::kN0>{}, number<FmhaPipeline::kK0>{}),
             {!skip_append_kv * (kargs.seqlen_k + i_n0), 0});
-
         auto knew_dram_window =
             make_tile_window(knew_dram,
                              make_tuple(number<FmhaPipeline::kN0>{}, number<FmhaPipeline::kK0>{}),
@@ -628,11 +639,37 @@ struct FmhaFwdAppendKVKernel
             make_tuple(number<FmhaPipeline::kN1>{}, number<FmhaPipeline::kN0>{}),
             {0, !skip_append_kv * (kargs.seqlen_k + i_n0)});
 
+        if constexpr(kIsPagedKV)
+        {
+            // DEVICE_DEBUG_STMTS
+            // {
+            //     printf("[DEVICE] i_block1: %d\n", i_block1);
+            //     auto local_origin = v_dram_window_tmp.get_window_origin();
+            //     printf("[DEVICE] origin: (%d, %d)\n",
+            //            local_origin.at(number<0>{}),
+            //            local_origin.at(number<1>{}));
+
+            //     printf("[DEVICE] psychical block_ptr 0: %p\n",
+            //            static_cast<void*>(v_tile_navigator.physical_blocks +
+            //                               0 * v_tile_navigator.block_stride));
+            //     printf("[DEVICE] psychical block_ptr 1: %p\n",
+            //            static_cast<void*>(v_tile_navigator.physical_blocks +
+            //                               1 * v_tile_navigator.block_stride));
+
+            //     printf("[DEVICE] tile window data ptr: %p\n",
+            //            static_cast<void*>(v_dram_window_tmp.get_bottom_tensor_view().buf_.p_data_));
+            // }
+        }
         auto vnew_dram_window =
             make_tile_window(vnew_dram,
                              make_tuple(number<FmhaPipeline::kN1>{}, number<FmhaPipeline::kN0>{}),
                              {0, i_n0});
-
+        // DEVICE_DEBUG_STMTS
+        // {
+        //     printf("[DEVICE] skip_transform_q: %d, skip_appendkv: %d\n",
+        //            kargs.seqlen_q <= i_m0,
+        //            kargs.seqlen_knew <= i_n0);
+        // }
         if constexpr(kApplyRoPE)
         {
             FmhaPipeline{}(q_dram_window,

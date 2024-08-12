@@ -1,7 +1,8 @@
 # validate user-specified fmha_fwd API list
 set(FMHA_FWD_KNOWN_APIS "fwd;fwd_splitkv;fwd_appendkv")
-set(FMHA_FWD_ENABLE_APIS "fwd" CACHE STRING
+set(FMHA_FWD_ENABLE_APIS "all" CACHE STRING
     "semicolon-separated list of APIs to generate (${FMHA_FWD_KNOWN_APIS}) & link, or \"all\".")
+set(FMHA_ENABLE_BWD_API OFF CACHE BOOL "Whether to generate bwd apis.")
 if(FMHA_FWD_ENABLE_APIS STREQUAL "all")
   set(FMHA_FWD_ENABLE_APIS ${FMHA_FWD_KNOWN_APIS})
 endif()
@@ -24,14 +25,9 @@ execute_process(
   --api ${FMHA_FWD_APIS} --list_blobs ${CMAKE_CURRENT_BINARY_DIR}/fwd_blob_list.txt
 )
 
-execute_process(
-  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/generate.py
-  --api bwd --list_blobs ${CMAKE_CURRENT_BINARY_DIR}/bwd_blob_list.txt)
-
 # NOTE: for cmake, the FMHA_FWD_GEN_BLOBS/FMHA_BWD_GEN_BLOBS files must be in the same directory
 #       as current cmake list, otherwise will not figure out the dependency properly
 file(STRINGS ${CMAKE_CURRENT_BINARY_DIR}/fwd_blob_list.txt FMHA_FWD_GEN_BLOBS)
-file(STRINGS ${CMAKE_CURRENT_BINARY_DIR}/bwd_blob_list.txt FMHA_BWD_GEN_BLOBS)
 
 add_custom_command(
   OUTPUT ${FMHA_FWD_GEN_BLOBS}
@@ -41,13 +37,6 @@ add_custom_command(
 )
 add_custom_target(FMHA_FWD_GEN_TASK DEPENDS ${FMHA_FWD_GEN_BLOBS})
 
-add_custom_command(
-  OUTPUT ${FMHA_BWD_GEN_BLOBS}
-  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/generate.py
-  --api bwd --output_dir ${CMAKE_CURRENT_BINARY_DIR}
-  COMMENT "Generate bwd attention kernels!"
-)
-add_custom_target(FMHA_BWD_GEN_TASK DEPENDS ${FMHA_BWD_GEN_BLOBS})
 
 set(EXAMPLE_FMHA_FWD "tile_example_fmha_fwd")
 # not using add_example_executable() to add this target, since we don't want this to have
@@ -58,14 +47,6 @@ add_dependencies(${EXAMPLE_FMHA_FWD} FMHA_FWD_GEN_TASK)
 target_include_directories(${EXAMPLE_FMHA_FWD} PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 target_sources(${EXAMPLE_FMHA_FWD} PRIVATE ${FMHA_FWD_GEN_BLOBS})
 
-set(EXAMPLE_FMHA_BWD "tile_example_fmha_bwd")
-# not using add_example_executable() to add this target, since we don't want this to have
-# to be included in "make all/install/check"
-message("adding example ${EXAMPLE_FMHA_BWD}")
-add_executable(${EXAMPLE_FMHA_BWD} EXCLUDE_FROM_ALL fmha_bwd.cpp)
-add_dependencies(${EXAMPLE_FMHA_FWD} FMHA_BWD_GEN_TASK)
-target_include_directories(${EXAMPLE_FMHA_BWD} PRIVATE ${CMAKE_CURRENT_LIST_DIR})
-target_sources(${EXAMPLE_FMHA_BWD} PRIVATE ${FMHA_BWD_GEN_BLOBS})
 
 # NOTE: this is dangerous since will change the whole kernel to flush denormals
 #       WIP with compiler team for an exp2 intrinsic..., then remove this
@@ -102,10 +83,38 @@ endif()
 
 # Allow comparing floating points directly in order to check sentinel values
 list(APPEND EXAMPLE_FMHA_FWD_COMPILE_OPTIONS -Wno-float-equal)
-list(APPEND EXAMPLE_FMHA_BWD_COMPILE_OPTIONS -Wno-float-equal)
 
 target_compile_options(${EXAMPLE_FMHA_FWD} PRIVATE ${EXAMPLE_FMHA_FWD_COMPILE_OPTIONS})
-target_compile_options(${EXAMPLE_FMHA_BWD} PRIVATE ${EXAMPLE_FMHA_BWD_COMPILE_OPTIONS})
+
+
+if(FMHA_ENABLE_BWD_API)
+  execute_process(
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/generate.py
+    --api bwd --list_blobs ${CMAKE_CURRENT_BINARY_DIR}/bwd_blob_list.txt)
+
+  file(STRINGS ${CMAKE_CURRENT_BINARY_DIR}/bwd_blob_list.txt FMHA_BWD_GEN_BLOBS)
+
+  add_custom_command(
+    OUTPUT ${FMHA_BWD_GEN_BLOBS}
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/generate.py
+    --api bwd --output_dir ${CMAKE_CURRENT_BINARY_DIR}
+    COMMENT "Generate bwd attention kernels!"
+  )
+  add_custom_target(FMHA_BWD_GEN_TASK DEPENDS ${FMHA_BWD_GEN_BLOBS})
+
+  set(EXAMPLE_FMHA_BWD "tile_example_fmha_bwd")
+  # not using add_example_executable() to add this target, since we don't want this to have
+  # to be included in "make all/install/check"
+  message("adding example ${EXAMPLE_FMHA_BWD}")
+  add_executable(${EXAMPLE_FMHA_BWD} EXCLUDE_FROM_ALL fmha_bwd.cpp)
+  add_dependencies(${EXAMPLE_FMHA_FWD} FMHA_BWD_GEN_TASK)
+  target_include_directories(${EXAMPLE_FMHA_BWD} PRIVATE ${CMAKE_CURRENT_LIST_DIR})
+  target_sources(${EXAMPLE_FMHA_BWD} PRIVATE ${FMHA_BWD_GEN_BLOBS})  
+
+  list(APPEND EXAMPLE_FMHA_BWD_COMPILE_OPTIONS -Wno-float-equal)
+  target_compile_options(${EXAMPLE_FMHA_BWD} PRIVATE ${EXAMPLE_FMHA_BWD_COMPILE_OPTIONS})
+
+endif()
 
 # TODO: we have to turn off this global prop, otherwise the progress bar generated
 # by cmake will print too many files, execvp: /bin/sh: Argument list too long

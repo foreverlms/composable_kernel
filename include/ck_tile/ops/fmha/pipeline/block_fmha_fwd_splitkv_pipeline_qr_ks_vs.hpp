@@ -225,7 +225,16 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
         }();
         const auto num_total_loop =
             integer_divide_ceil(seqlen_k_end - adjusted_seqlen_k_start, kN0);
-
+#if 0
+        // DEVICE_DEBUG_STMTS
+        // {
+        //     printf("[DEVICE] seqlen_k_start: %d, seqlen_k_end: %d\n", seqlen_k_start, seqlen_k_end);
+        //     printf("[DEVICE] adjusted_seqlen_k_start: %d, num_total_loop: %d\n",
+        //            adjusted_seqlen_k_start,
+        //            num_total_loop);
+        //     printf("[DEVICE] kHasUnevenSplits: %d\n", kHasUnevenSplits);
+        // }
+#endif
         // check early exit if masked and no work to do.
         if constexpr(FmhaMask::IsMasking || kHasUnevenSplits)
         {
@@ -274,6 +283,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
         static_assert(1 <= k1_loops);
         do
         {
+            // lms: QK Gemm 0
             // STAGE 1, QK gemm
             auto k_dram_window = make_tile_window(
                 k_dram_block_window,
@@ -517,7 +527,9 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
                 });
             });
 
+            // lms: __syncthreads(), block level synchronization
             block_sync_lds();
+            
             if constexpr(std::is_same_v<VLayout, ck_tile::tensor_layout::gemm::RowMajor>)
             {
                 auto v_shuffle_tmp = make_static_distributed_tensor<VDataType>(
@@ -539,7 +551,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
                 cast_tile<PDataType>(tile_elementwise_in(p_compute_element_func, p_compute));
 
             // STAGE 3, KV gemm
-            if constexpr(k1_loops > 1)
+            if constexpr(k1_loops > 1) // lms: KV Gemm 1
             {
                 static_for<0, k1_loops - 1, 1>{}([&,
                                                   &i_page_block_v_ = i_page_block_v,

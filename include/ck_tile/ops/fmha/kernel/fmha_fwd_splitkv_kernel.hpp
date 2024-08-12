@@ -468,12 +468,13 @@ struct FmhaFwdSplitKVKernel
 
     CK_TILE_DEVICE void operator()(Kargs kargs) const
     {
+        // lms: Kernel Entrance
         // allocate LDS
         __shared__ char smem_ptr[GetSmemSize()];
 
         // divide problem
         const auto [i_tile_m, i_tile_n, i_split, i_nhead, i_batch] =
-            TilePartitioner{}(kargs.seqlen_q, kargs.hdim_v, kargs.num_splits);
+            TilePartitioner{}(kargs.seqlen_q, kargs.hdim_v, kargs.num_splits); // lms: this is thread block level tile, not thread
 
         const index_t i_m0 = __builtin_amdgcn_readfirstlane(i_tile_m * FmhaPipeline::kM0);
         const index_t i_n1 = __builtin_amdgcn_readfirstlane(i_tile_n * FmhaPipeline::kN1);

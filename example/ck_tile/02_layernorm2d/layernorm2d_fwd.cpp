@@ -26,6 +26,9 @@ float layernorm2d_fwd(layernorm2d_fwd_traits t,
         using warp_tile   = ck_tile::sequence<8, 128>;
         using block_tile  = ck_tile::sequence<32, 128>;
 
+        // lms: 每个block处理(32,128)大小的tile,每个block因此warp数为：4
+        // Grid大小为 Ceil_div(M, 32)
+
         using Shape = ck_tile::TileLayernorm2dShape<thread_tile, warp_tile, block_tile>;
 
         using PipelineProblem = ck_tile::BlockLayernorm2dFwdProblem<XDataType,
