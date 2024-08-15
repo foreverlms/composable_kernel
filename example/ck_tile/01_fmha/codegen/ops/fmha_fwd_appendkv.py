@@ -328,6 +328,8 @@ def get_fwd_appendkv_blobs(kernel_filter : Optional[str], receipt, mask_impl) ->
                 if receipt == 2:
                     cond = dtype in ['fp16', 'bf16']
                     cond &= pipeline.F_vlayout == 'row'
+                    # cond &= pipeline.F_bias in ['no', 'alibi']
+                    # cond &= pipeline.F_squant == 'f'
                     if not cond:
                         continue
                 api_pool.register_traits(k.api_trait())
