@@ -140,13 +140,20 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
                FmhaMask mask,
                PositionEncoding position_encoding,
                float scale_s,
-               void* smem_ptr) const
+               void* smem_ptr,
+               bool use_batched_ptrs = false) const
     {
+        printf("LMS: goes into pipeline\n");
         static_assert(
             std::is_same_v<QDataType, remove_cvref_t<typename QDramBlockWindowTmp::DataType>> &&
                 std::is_same_v<KDataType, remove_cvref_t<typename KDramBlockWindowTmp::DataType>> &&
                 std::is_same_v<VDataType, remove_cvref_t<typename VDramBlockWindowTmp::DataType>>,
             "wrong!");
+
+        if(use_batched_ptrs)
+        {
+            printf("LMS: in l3m cases!");
+        }
 
         static_assert(kM0 == QDramBlockWindowTmp{}.get_window_lengths()[number<0>{}] &&
                           kN0 == KDramBlockWindowTmp{}.get_window_lengths()[number<0>{}] &&
@@ -162,6 +169,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
             static_cast<char*>(smem_ptr) + Policy::template GetSmemSizeQ<Problem>()));
         auto k_lds           = make_tensor_view<address_space_enum::lds>(
             k_lds_ptr, Policy::template MakeKLdsBlockDescriptor<Problem>());
+        // lms: k_lds has shape: [kN0, hd_q], tile window below
         auto k_lds_window =
             make_tile_window(k_lds, make_tuple(number<kN0>{}, number<kK0>{}), {0, 0});
 
@@ -179,13 +187,13 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
         auto q_dram_window = make_tile_window(
             q_dram_block_window_tmp.get_bottom_tensor_view(),
             q_dram_block_window_tmp.get_window_lengths(),
-            q_dram_block_window_tmp.get_window_origin(),
+            q_dram_block_window_tmp.get_window_origin(), // lms: i_m0, 0
             Policy::template MakeQDramTileDistribution<Problem, decltype(gemm_0)>());
 
         auto q = load_tile(q_dram_window);
 
         using SaccBlockTileType = decltype(gemm_0.MakeCBlockTile());
-        auto s_acc              = SaccBlockTileType{};
+        auto s_acc              = SaccBlockTileType{}; // lms: S Acc Type
 
         // reduction function for softmax
         const auto f_max = [](auto e0, auto e1) { return max(e0, e1); };
@@ -201,14 +209,17 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
 
         // init Oacc, M, L
         auto o_acc = OaccBlockTileType{};
-        auto m     = MLBlockTileType{};
-        auto l     = MLBlockTileType{};
+        auto m     = MLBlockTileType{}; // lms: for max
+        auto l     = MLBlockTileType{}; // lms: for L in flash attention 2
 
         clear_tile(o_acc);
         set_tile(m, -numeric<SMPLComputeDataType>::infinity());
         clear_tile(l);
 
-        const auto q_origin                       = q_dram_window.get_window_origin();
+        const auto q_origin =
+            q_dram_window.get_window_origin(); // {i_m0, 0}, i_m0 = i_block_seqlen_q * kM0
+
+        // lms: range of seqlen_k that current thread blocks process.
         const auto [seqlen_k_start, seqlen_k_end] = mask.GetTileRangeAlongX(
             q_origin.at(number<0>{}), number<kM0>{}, number<kN0>{}, num_splits, i_split);
 
@@ -216,7 +227,8 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
         const index_t adjusted_seqlen_k_start = [&, seqlen_k_start_ = seqlen_k_start] {
             if constexpr(kIsPagedKV)
             {
-                return kN0 * integer_divide_floor(seqlen_k_start_, kN0);
+                return kN0 * integer_divide_floor(seqlen_k_start_,
+                                                  kN0); // FIXME: (lms) associated with paged KV.
             }
             else
             {
@@ -224,7 +236,8 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
             }
         }();
         const auto num_total_loop =
-            integer_divide_ceil(seqlen_k_end - adjusted_seqlen_k_start, kN0);
+            integer_divide_ceil(seqlen_k_end - adjusted_seqlen_k_start,
+                                kN0); // lms: loops in seqlen_k in current thread block.
 #if 0
         // DEVICE_DEBUG_STMTS
         // {
@@ -276,9 +289,13 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
 
         // prefetch K tile
         index_t i_total_loops      = 0;
-        constexpr index_t k0_loops = kK0BlockLength / kK0;
-        constexpr index_t k1_loops = kN0 / kK1;
+        constexpr index_t k0_loops = kK0BlockLength / kK0; // lms: split qk gemm splitK
+        constexpr index_t k1_loops =
+            kN0 / kK1; // lms: split pv gemm splitK,  loop in K (M,K @ K,N), M is KN0 for pv Gemm.
 
+#if 1
+        BlockFmhaShape::print_fmha_param();
+#endif
         static_assert(2 <= k0_loops);
         static_assert(1 <= k1_loops);
         do
@@ -294,9 +311,14 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
             {
                 // moving k_dram_window is an in-page-block operation, so there is
                 // no need to invoke k_page_block_navigator.move_tile_window() here.
+                // lms: Move K tile , prefetch kK0
                 move_tile_window(k_dram_window, {0, kK0});
                 clear_tile(s_acc); // initialize C
-                store_tile(k_lds_window, tile_elementwise_in(k_element_func, k_block_tile));
+                store_tile(
+                    k_lds_window,
+                    tile_elementwise_in(
+                        k_element_func,
+                        k_block_tile)); // lms: load tile value from global memory to share memory
                 k_block_tile = load_tile(k_dram_window);
             }
 
@@ -322,6 +344,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
                                           sequence<kM0, (i_k0 + 1) * kK0>{}),
                            k_lds_window);
                     block_sync_lds();
+                    // FIXME: k tile moving
                     move_tile_window(k_dram_window, {0, kK0});
 
                     store_tile(
@@ -390,6 +413,8 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
             }
             else
             {
+                // lms: This branch is where l3m should enter
+                printf("LMS: goes into non-bias, just scaling!\n");
                 s_acc = tile_elementwise_in(s_acc_element_func, s_acc);
 #if !CK_TILE_FMHA_FWD_FAST_EXP2
                 tile_elementwise_inout([&scale_s](auto& x) { x = x * scale_s; }, s_acc);
@@ -400,6 +425,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
             /// TODO: only check in first/last iteration without increasing code size
             if constexpr(kHasUnevenSplits)
             {
+                // FIXME: (lms) associated with paged kv page block
                 const auto k_origin = k_page_block_navigator.to_global_window_origin(
                     i_page_block_k, k_dram_block_window.get_window_origin());
                 set_tile_if(s_acc,
@@ -419,8 +445,10 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
                             });
             }
 
+            // lms: Masking
             if constexpr(kPadSeqLenK || FmhaMask::IsMasking)
             {
+                // lms: associated with paged KV
                 const auto k_origin = k_page_block_navigator.to_global_window_origin(
                     i_page_block_k, k_dram_block_window.get_window_origin());
                 bool need_perpixel_check = mask.IsEdgeTile(q_origin.at(number<0>{}),
@@ -529,9 +557,10 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
 
             // lms: __syncthreads(), block level synchronization
             block_sync_lds();
-            
+
             if constexpr(std::is_same_v<VLayout, ck_tile::tensor_layout::gemm::RowMajor>)
             {
+                // lms: Yes. Row-major
                 auto v_shuffle_tmp = make_static_distributed_tensor<VDataType>(
                     Policy::template MakeShuffledVRegBlockDescriptor<Problem>());
                 shuffle_tile(v_shuffle_tmp, v_prefetch);
@@ -544,6 +573,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
                 store_tile(v_lds_window,
                            tile_elementwise_in(v_element_func, v_prefetch)); // store the prefetch
             }
+            // FIXME: (lms) paged-cache associated
             i_page_block_v =
                 v_page_block_navigator.move_tile_window(i_page_block_v, v_dram_window, {0, kK1});
 
@@ -583,7 +613,10 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
             }
             // move K tile windows
             i_page_block_k = k_page_block_navigator.move_tile_window(
-                i_page_block_k, k_dram_block_window, {kN0, 0});
+                i_page_block_k,
+                k_dram_block_window,
+                {kN0, 0}); // lms: to next K tile {KN0}, if in the same page block, i_page_block_k
+                           // won't change.
             // tail
             {
                 block_sync_lds();
@@ -667,6 +700,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
                float scale_s,
                void* smem_ptr) const
     {
+        // lms: For FP16
         return operator()(q_dram_block_window_tmp,
                           identity{},
                           k_dram_block_window_tmp,

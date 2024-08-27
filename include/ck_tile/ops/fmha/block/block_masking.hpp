@@ -308,7 +308,7 @@ struct SimplifiedGenericAttentionMask
     {
         auto [origin_start, origin_end] = GetTileRangeAlongX(i_y, height, width);
 
-        const index_t x_per_split = ck_tile::max(1, x_total / num_splits);
+        const index_t x_per_split = ck_tile::max(1, x_total / num_splits); // lms: x_toal is the row length of mask, actually seqlen_k
         const index_t split_start = x_per_split * i_split;
         const index_t split_end = (i_split == num_splits - 1 ? x_total : split_start + x_per_split);
 
@@ -412,7 +412,9 @@ make_generic_attention_mask_coordinates_from_lr_window(index_t left_size,
                                                        index_t x_total,
                                                        bool is_top_left = true)
 {
+    // lms: sliding window attention is defaultly not used in l3m.
     // TODO: below should all use sgpr arithmetic
+    // For top-left causal mask, left = -1, right = 0, so for left, it can see `y_total`(seqlen_q) tokens in KV, for right, zero.
     index_t left_size_tmp  = is_top_left ? y_total - 1 : x_total - 1;
     index_t right_size_tmp = is_top_left ? x_total - 1 : y_total - 1;
 

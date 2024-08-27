@@ -115,7 +115,7 @@ struct BlockFmhaPipelineQXCustomPolicy</* QLoadOnce = */ true>
                                                  typename Problem::BlockFmhaShape::Gemm0BlockWarps,
                                                  decltype(warp_gemm)>;
 
-        return BlockGemmARegBSmemCRegV2<BlockGemmProblem, BlockGemmPolicy>{};
+        return BlockGemmARegBSmemCRegV2<BlockGemmProblem, BlockGemmPolicy>{}; // lms: Gemm dispatch?
     }
 };
 

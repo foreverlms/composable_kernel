@@ -37,7 +37,7 @@ make_kernel(KernelImpl /*f*/, dim3 grid_dim, dim3 block_dim, std::size_t lds_byt
     const auto kernel = kentry<MaxThreadPerBlock, MinBlockPerCu, KernelImpl, Args...>;
 
     return [=](const stream_config& s) {
-        kernel<<<grid_dim, block_dim, lds_byte, s.stream_id_>>>(args...);
+            kernel<<<grid_dim, block_dim, lds_byte, s.stream_id_>>>(args...);
     };
 }
 

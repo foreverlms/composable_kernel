@@ -49,7 +49,7 @@ struct tile_window_with_static_distribution
     static_assert(TileDstr::is_static(), "wrong!");
 
     static_assert(NDimBottomTensor == WindowAdaptor::get_num_of_bottom_dimension(),
-                  "wrong! inconsistent # of diemsnions");
+                  "wrong! inconsistent # of diemsnions"); // lms: TYPO.
 
     using AdaptorTopIndex   = array<index_t, NDimWindowAdaptorTop>;
     using BottomTensorIndex = array<index_t, NDimBottomTensor>;
