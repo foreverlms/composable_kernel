@@ -77,12 +77,12 @@ struct PageBlockBatchedPtrNavigator
     // KV page has shape: [layers, nhead, page_block_size, hdim_v]
     // local window size: [page_block_size, hdim_v]
     CK_TILE_HOST_DEVICE constexpr PageBlockBatchedPtrNavigator(
-        copy_const_t<DataType, void>** kv_cache_batched_ptrs_,
+        void** kv_cache_batched_ptrs_,
         long_index_t batch_offset_, // layer offset
         long_index_t nhead_offset_,
         index_t page_block_size_,
         long_index_t row_stride_, // stride_seq
-        index_t num_blocks_, )
+        index_t num_blocks_)
         : kv_cache_batched_ptrs(reinterpret_cast<DataType**>(kv_cache_batched_ptrs_)),
           batch_offset(batch_offset_),
           nhead_offset(nhead_offset_),
@@ -218,7 +218,7 @@ struct PageBlockBatchedPtrNavigator
         /* local_window_origin: coord in [page_block_size, hdim]*/
         if constexpr(VirtualDim == 0)
         {
-            return make_multi_index(block_index * page_block_size + local_window_origin.at(number<0>{}, local_window_origin.at(number<1>{}));
+            return make_multi_index(block_index * page_block_size + local_window_origin.at(number<0>{}), local_window_origin.at(number<1>{}));
         }
         else
         {

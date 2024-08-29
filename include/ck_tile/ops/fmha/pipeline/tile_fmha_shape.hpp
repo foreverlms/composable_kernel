@@ -42,17 +42,20 @@ struct TileFmhaShape
                                                                  ck_tile::tensor_layout::gemm::RowMajor,
                                                                  ck_tile::tensor_layout::gemm::ColumnMajor>;
 
-    static void print_fmha_param()
+    __device__ static void print_fmha_param()
     {
-        printf("\nLMS: fmha_shape params: kM0: %d, kN0: %d, kK0: %d, kN1: %d, kK1: %d, "
-               "kK0BlockLength: %d, IsVLayoutRowMajor: %d\n",
-               kM0,
-               kN0,
-               kK0,
-               kN1,
-               kK1,
-               kK0BlockLength,
-               IsVLayoutRowMajor);
+        if(threadIdx.x == 0 && blockIdx.x == 0)
+        {
+            printf("\nLMS: fmha_shape params: kM0: %d, kN0: %d, kK0: %d, kN1: %d, kK1: %d, "
+                   "kK0BlockLength: %d, IsVLayoutRowMajor: %d\n",
+                   kM0,
+                   kN0,
+                   kK0,
+                   kN1,
+                   kK1,
+                   kK0BlockLength,
+                   IsVLayoutRowMajor);
+        }
     }
 };
 

@@ -8,6 +8,8 @@
 #include "ck_tile/ops/fmha/pipeline/block_fmha_fwd_splitkv_pipeline_qr_ks_vs_default_policy.hpp"
 #include "ck_tile/ops/reduce/block/block_reduce.hpp"
 
+#include "ck_tile/ops/fmha/print_utils.hpp"
+
 namespace ck_tile {
 
 // This pipeline is qkv all located in LDS
@@ -140,20 +142,13 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
                FmhaMask mask,
                PositionEncoding position_encoding,
                float scale_s,
-               void* smem_ptr,
-               bool use_batched_ptrs = false) const
+               void* smem_ptr) const
     {
-        printf("LMS: goes into pipeline\n");
         static_assert(
             std::is_same_v<QDataType, remove_cvref_t<typename QDramBlockWindowTmp::DataType>> &&
                 std::is_same_v<KDataType, remove_cvref_t<typename KDramBlockWindowTmp::DataType>> &&
                 std::is_same_v<VDataType, remove_cvref_t<typename VDramBlockWindowTmp::DataType>>,
             "wrong!");
-
-        if(use_batched_ptrs)
-        {
-            printf("LMS: in l3m cases!");
-        }
 
         static_assert(kM0 == QDramBlockWindowTmp{}.get_window_lengths()[number<0>{}] &&
                           kN0 == KDramBlockWindowTmp{}.get_window_lengths()[number<0>{}] &&
@@ -208,10 +203,9 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
         using OaccBlockTileType = decltype(gemm_1.MakeCBlockTile());
 
         // init Oacc, M, L
-        auto o_acc = OaccBlockTileType{};
-        auto m     = MLBlockTileType{}; // lms: for max
-        auto l     = MLBlockTileType{}; // lms: for L in flash attention 2
-
+        auto o_acc = OaccBlockTileType{}; // lms: each oacc tile has shape: [kM0, hdim_v]
+        auto m     = MLBlockTileType{};   // lms: for max, [kM0,]
+        auto l     = MLBlockTileType{};   // lms: for L in flash attention 2
         clear_tile(o_acc);
         set_tile(m, -numeric<SMPLComputeDataType>::infinity());
         clear_tile(l);
@@ -293,7 +287,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
         constexpr index_t k1_loops =
             kN0 / kK1; // lms: split pv gemm splitK,  loop in K (M,K @ K,N), M is KN0 for pv Gemm.
 
-#if 1
+#if 0
         BlockFmhaShape::print_fmha_param();
 #endif
         static_assert(2 <= k0_loops);
@@ -312,8 +306,8 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
                 // moving k_dram_window is an in-page-block operation, so there is
                 // no need to invoke k_page_block_navigator.move_tile_window() here.
                 // lms: Move K tile , prefetch kK0
-                move_tile_window(k_dram_window, {0, kK0});
-                clear_tile(s_acc); // initialize C
+                move_tile_window(k_dram_window, {0, kK0}); // k_dram_window is
+                clear_tile(s_acc);                         // initialize C
                 store_tile(
                     k_lds_window,
                     tile_elementwise_in(
@@ -321,7 +315,6 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
                         k_block_tile)); // lms: load tile value from global memory to share memory
                 k_block_tile = load_tile(k_dram_window);
             }
-
             if constexpr(BiasEnum == BlockAttentionBiasEnum::ELEMENTWISE_BIAS)
             {
                 __builtin_amdgcn_sched_barrier(
@@ -374,6 +367,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
                        k_lds_window);
             }
 
+            // lms: above is loop in QK gemm head_dim kK0.
             // STAGE 2, scale_s, add bias, mask, softmax
             if constexpr(BiasEnum == BlockAttentionBiasEnum::ELEMENTWISE_BIAS)
             {
@@ -414,7 +408,6 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
             else
             {
                 // lms: This branch is where l3m should enter
-                printf("LMS: goes into non-bias, just scaling!\n");
                 s_acc = tile_elementwise_in(s_acc_element_func, s_acc);
 #if !CK_TILE_FMHA_FWD_FAST_EXP2
                 tile_elementwise_inout([&scale_s](auto& x) { x = x * scale_s; }, s_acc);
@@ -625,6 +618,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
                        v_lds_window);
                 block_sync_lds();
             }
+
         } while(++i_total_loops < num_total_loop);
 
         if constexpr(kStoreLSE)

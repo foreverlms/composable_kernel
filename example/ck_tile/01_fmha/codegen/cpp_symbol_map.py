@@ -5,7 +5,7 @@
 DTYPE_MAP = {
     "fp16": "ck_tile::fp16_t",
     "bf16": "ck_tile::bf16_t",
-    "fp8" : "ck_tile::fp8_t"
+    # "fp8" : "ck_tile::fp8_t"
 }
 
 MASK_IMPL = {
@@ -55,33 +55,33 @@ def get_mask_check_map(mask : str):
 
 BIAS_MAP = {
     "no" : "ck_tile::BlockAttentionBiasEnum::NO_BIAS",
-    "bias"  : "ck_tile::BlockAttentionBiasEnum::ELEMENTWISE_BIAS",
-    "alibi" : "ck_tile::BlockAttentionBiasEnum::ALIBI"
+    # "bias"  : "ck_tile::BlockAttentionBiasEnum::ELEMENTWISE_BIAS",
+    # "alibi" : "ck_tile::BlockAttentionBiasEnum::ALIBI"
 }
 
 # TODO: this is ugly
 BIAS_CHECK_MAP = {
     "no" : "bias_enum::no_bias",
-    "bias"  : "bias_enum::elementwise_bias",
-    "alibi" : "bias_enum::alibi"
+    # "bias"  : "bias_enum::elementwise_bias",
+    # "alibi" : "bias_enum::alibi"
 }
 
 ROPE_MAP = {
     "no" : "ck_tile::RotaryEmbeddingEnum::NONE",
-    "inter"  : "ck_tile::RotaryEmbeddingEnum::INTERLEAVED",
-    "half" : "ck_tile::RotaryEmbeddingEnum::HALF_ROTATED"
+    # "inter"  : "ck_tile::RotaryEmbeddingEnum::INTERLEAVED",
+    # "half" : "ck_tile::RotaryEmbeddingEnum::HALF_ROTATED"
 }
 
 # TODO: avoid duplication
 ROPE_CHECK_MAP = {
     "no" : "rope_enum::none",
-    "inter"  : "rope_enum::interleaved",
-    "half" : "rope_enum::half_rotated"
+    # "inter"  : "rope_enum::interleaved",
+    # "half" : "rope_enum::half_rotated"
 }
 
 MODE_MAP = {
     "batch" : "false",
-    "group" : "true"
+    # "group" : "true"
 }
 
 LAYOUT_MAP = {

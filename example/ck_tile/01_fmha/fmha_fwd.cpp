@@ -17,6 +17,8 @@
 #include <utility>
 #include <vector>
 
+#define PRINT_MESSAGE 1
+
 template <typename T>
 std::ostream& operator<<(std::ostream& os, const std::vector<T>& v)
 {
@@ -284,7 +286,6 @@ bool run(const ck_tile::ArgParser& arg_parser)
         hdim_v = hdim_q;
 
     ck_tile::index_t seqlen_knew = arg_parser.get_int("s_knew");
-    printf("LMS:seqlen_knew : %d\n", seqlen_knew);
 #if !(CK_TILE_FMHA_FWD_APPENDKV_API && CK_TILE_FMHA_FWD_SPLITKV_API)
     if(seqlen_knew != 0)
     {
@@ -296,6 +297,8 @@ bool run(const ck_tile::ArgParser& arg_parser)
     {
         seqlen_knew = randint<ck_tile::index_t>(1, arg_parser.get_int("s"), seed);
     }
+
+    printf("LMS:seqlen_knew : %d\n", seqlen_knew);
 
     ck_tile::index_t rotary_dim = arg_parser.get_int("rotary_dim");
     if constexpr(!(std::is_same_v<DataType, ck_tile::fp16_t> ||
@@ -366,7 +369,6 @@ bool run(const ck_tile::ArgParser& arg_parser)
         std::cerr << "kvcache enabled. ignoring the 'mode' option" << std::endl;
         mode = mode_enum::batch;
     }
-
     auto [seqlen_qs, seqlen_ks, seqlen_kpads] =
         decode_seqlen(mode,
                       batch,
@@ -382,11 +384,12 @@ bool run(const ck_tile::ArgParser& arg_parser)
                    cache_seqlen_ks.begin(),
                    [&](auto seqlen_k) { return seqlen_k - seqlen_knew; });
 
-#if 0
+#if PRINT_MESSAGE
     // clang-format off
     std::cout << "seqlen_qs:"; for(auto xx : seqlen_qs) { std::cout << xx << ","; } std::cout << std::endl;
     std::cout << "seqlen_ks:"; for(auto xx : seqlen_ks) { std::cout << xx << ","; } std::cout << std::endl;
     std::cout << "seqlen_kpads:"; for(auto xx : seqlen_kpads) { std::cout << xx << ","; } std::cout << std::endl;
+    std::cout << "cache_seqlen_ks:"; for(auto xx : cache_seqlen_ks) { std::cout << xx << ","; } std::cout << std::endl;
     // clang-format on
 #endif
 
@@ -478,6 +481,12 @@ bool run(const ck_tile::ArgParser& arg_parser)
     const auto seqstart_q_host              = to_seqstarts(seqlen_qs);
     const auto seqstart_k_host              = to_seqstarts(seqlen_ks);
     const auto seqstart_k_with_padding_host = to_seqstarts(seqlen_kpads);
+
+#if PRINT_MESSAGE
+    std::cout << "seqstart_q_host:"; for(auto xx : seqstart_q_host) { std::cout << xx << ","; } std::cout << std::endl;
+    std::cout << "seqstart_k_host:"; for(auto xx : seqstart_k_host) { std::cout << xx << ","; } std::cout << std::endl;
+    std::cout << "seqstart_k_with_padding_host:"; for(auto xx : seqstart_k_with_padding_host) { std::cout << xx << ","; } std::cout << std::endl;
+#endif
 
     using TypeConfig = FmhaFwdTypeConfig<DataType>;
 

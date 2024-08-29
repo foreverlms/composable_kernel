@@ -218,6 +218,12 @@ struct fmha_fwd_splitkv_args
     ck_tile::index_t window_size_left;
     ck_tile::index_t window_size_right;
     ck_tile::index_t mask_type;
+
+    // batched ptr inputs, same as l3m
+    void*** __restrict__ k_batched_ptr = nullptr;
+    void*** __restrict__ v_batched_ptr = nullptr;
+    ck_tile::index_t k_batched_offset           = 0;
+    ck_tile::index_t v_batched_offset           = 0;
 };
 
 struct fmha_fwd_appendkv_args
@@ -410,6 +416,7 @@ auto fmha_fwd_splitkv_create_kargs_and_grids(fmha_fwd_splitkv_args args)
         }
         else
         { // create batch mode kernel arguments
+        // lms: modifying mainly for this.
             return Kernel::MakeKargs(args.q_ptr,
                                      args.k_ptr,
                                      args.v_ptr,
@@ -452,7 +459,11 @@ auto fmha_fwd_splitkv_create_kargs_and_grids(fmha_fwd_splitkv_args args)
                                      args.split_stride_o_acc,
                                      args.window_size_left,
                                      args.window_size_right,
-                                     args.mask_type);
+                                     args.mask_type,
+                                     args.k_batched_ptr,
+                                     args.v_batched_ptr,
+                                     args.k_batched_offset,
+                                     args.v_batched_offset);
         }
     }();
 
