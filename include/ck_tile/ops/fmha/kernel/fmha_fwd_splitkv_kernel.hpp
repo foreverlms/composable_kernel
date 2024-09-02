@@ -204,6 +204,8 @@ struct FmhaFwdSplitKVKernel
           std::conditional_t<kDoFp8StaticQuant, Fp8StaticQuantKargs, EmptyKargs<2>>,
           std::conditional_t<kIsPagedKV, PageBlockTableKargs, CacheBatchIdxKargs>
     {
+        const int32_t* seqstart_q_ptr;
+        const int32_t* seqstart_k_ptr;
         const int32_t* seqlen_k_ptr;
 
         ck_tile::index_t batch_stride_q;
@@ -219,7 +221,8 @@ struct FmhaFwdSplitKVKernel
                                                 AlibiKargs,
                                                 EmptyKargs<0>>>,
           std::conditional_t<kHasMask, MaskKargs, EmptyKargs<1>>,
-          std::conditional_t<kDoFp8StaticQuant, Fp8StaticQuantKargs, EmptyKargs<2>>
+          std::conditional_t<kDoFp8StaticQuant, Fp8StaticQuantKargs, EmptyKargs<2>>,
+          std::conditional_t<kIsPagedKV, PageBlockTableKargs, EmptyKargs<7>>
     {
         const int32_t* seqstart_q_ptr;
         const int32_t* seqstart_k_ptr;
@@ -279,7 +282,9 @@ struct FmhaFwdSplitKVKernel
               void*** k_batched_ptr,
               void*** v_batched_ptr,
               ck_tile::index_t k_batched_offset,
-              ck_tile::index_t v_batched_offset)
+              ck_tile::index_t v_batched_offset,
+              const void* seqstart_q_ptr,
+              const void* seqstart_k_ptr)
     {
         Kargs kargs{{q_ptr,
                      k_ptr,
@@ -316,6 +321,8 @@ struct FmhaFwdSplitKVKernel
                     {},                   // placeholder for mask
                     {},                   // placeholder for fp8_static_quant args
                     {},                   // placeholder for paged-block table or cache_batch_idx
+                    reinterpret_cast<const int32_t*>(seqstart_q_ptr),
+                    reinterpret_cast<const int32_t*>(seqstart_k_ptr),
                     reinterpret_cast<const int32_t*>(seqlen_k_ptr),
                     batch_stride_q,
                     batch_stride_k,
@@ -400,7 +407,11 @@ struct FmhaFwdSplitKVKernel
               ck_tile::index_t split_stride_o_acc,
               ck_tile::index_t window_size_left,
               ck_tile::index_t window_size_right,
-              ck_tile::index_t mask_type)
+              ck_tile::index_t mask_type,
+              void*** k_batched_ptr,
+              void*** v_batched_ptr,
+              ck_tile::index_t k_batched_offset,
+              ck_tile::index_t v_batched_offset)
     {
         Kargs kargs{{q_ptr,
                      k_ptr,
@@ -436,6 +447,7 @@ struct FmhaFwdSplitKVKernel
                     {},                   // placeholder for bias
                     {},                   // placeholder for mask
                     {},                   // placeholder for fp8_static_quant args
+                    {},                   // placeholder for pagekv
                     reinterpret_cast<const int32_t*>(seqstart_q_ptr),
                     reinterpret_cast<const int32_t*>(seqstart_k_ptr),
                     reinterpret_cast<const int32_t*>(seqlen_k_ptr),
@@ -464,6 +476,14 @@ struct FmhaFwdSplitKVKernel
             kargs.scale_p = scale_p;
         }
 
+        if constexpr(kIsPagedKV)
+        {
+            kargs.k_batched_ptr    = k_batched_ptr;
+            kargs.v_batched_ptr    = v_batched_ptr;
+            kargs.k_batched_offset = k_batched_offset;
+            kargs.v_batched_offset = v_batched_offset;
+        }
+
         return kargs;
     }
 
@@ -488,7 +508,6 @@ struct FmhaFwdSplitKVKernel
         // lms: Kernel Entrance
         // allocate LDS
         __shared__ char smem_ptr[GetSmemSize()];
-
         // divide problem
         // lms: from the tiling, if kN1 is equal to hdimv, so the i_tilen will always be 0.
         const auto [i_tile_m, i_tile_n, i_split, i_nhead, i_batch] =
@@ -561,10 +580,6 @@ struct FmhaFwdSplitKVKernel
         }
         else
         {
-            // if (kargs.seqstart_q_ptr != nullptr){
-            //     kargs.seqlen_q = kargs.seqstart_q_ptr[i_batch + 1] - kargs.seqstart_q_ptr[i_batch];
-            //     PRINT_ONLY_IN_GRID("LMS: seqlen_q: %d, seqlen_k: %d\n", kargs.seqlen_q, kargs.seqlen_k)
-            // }
             const index_t i_cache_batch = [&, i_batch_ = i_batch] {
                 if constexpr(kIsPagedKV)
                 {
@@ -577,26 +592,85 @@ struct FmhaFwdSplitKVKernel
                 }
             }();
 
+            // original
 
-            batch_offset_q = static_cast<long_index_t>(i_batch) * kargs.batch_stride_q;
-            batch_offset_k = static_cast<long_index_t>(i_cache_batch) * kargs.batch_stride_k;
-            batch_offset_v = static_cast<long_index_t>(i_cache_batch) * kargs.batch_stride_v;
+            // batch_offset_q = static_cast<long_index_t>(i_batch) * kargs.batch_stride_q;
+            // batch_offset_k = static_cast<long_index_t>(i_cache_batch) * kargs.batch_stride_k;
+            // batch_offset_v = static_cast<long_index_t>(i_cache_batch) * kargs.batch_stride_v;
+            // if constexpr(BiasEnum == BlockAttentionBiasEnum::ELEMENTWISE_BIAS)
+            // {
+            //     batch_offset_bias = static_cast<long_index_t>(i_batch) * kargs.batch_stride_bias;
+            // }
 
-            // PRINT_ONLY_IN_GRID("LMS: batch_offset_q: %d, batch_offset_k: %d, batch_offset_v: %d\n", batch_offset_q, batch_offset_k, batch_offset_v);
+            // if(kargs.seqlen_k_ptr != nullptr)
+            // {
+            //     kargs.seqlen_k = kargs.seqlen_k_ptr[i_batch];
+            // }
+            // end
 
-
-            if constexpr(BiasEnum == BlockAttentionBiasEnum::ELEMENTWISE_BIAS)
+            // now
+            if(use_batched_ptrs)
             {
-                batch_offset_bias = static_cast<long_index_t>(i_batch) * kargs.batch_stride_bias;
+                // get starting offset for each batch
+                const long_index_t query_start = kargs.seqstart_q_ptr[i_batch];
+                // const long_index_t key_start   = kargs.seqstart_k_ptr[i_batch];
+
+                // PRINT_ONLY_IN_GRID("LMS: query_start: %d, key_start: %d\n",
+                //                    static_cast<int>(query_start),
+                //                    static_cast<int>(key_start));
+
+                batch_offset_q = query_start * kargs.stride_q;
+                // batch_offset_k = key_start * kargs.stride_k;
+
+                // if constexpr(std::is_same_v<VLayout, ck_tile::tensor_layout::gemm::RowMajor>)
+                // {
+                //     batch_offset_v = key_start * kargs.stride_v;
+                // }
+                // else
+                // {
+                //     batch_offset_v = key_start;
+                // }
+
+                // get real # queries & # keys under group mode
+                kargs.seqlen_q = kargs.seqstart_q_ptr[i_batch + 1] - kargs.seqstart_q_ptr[i_batch];
+
+                // # of required blocks is different in each groups, terminate unnecessary blocks
+                // earlier
+                if(kargs.seqlen_q <= i_m0)
+                {
+                    return;
+                }
+
+                if(kargs.seqlen_k_ptr != nullptr)
+                {
+                    kargs.seqlen_k = kargs.seqlen_k_ptr[i_batch];
+                }
+                else
+                {
+                    kargs.seqlen_k =
+                        kargs.seqstart_k_ptr[i_batch + 1] - kargs.seqstart_k_ptr[i_batch];
+                }
+            }
+            else
+            {
+                batch_offset_q = static_cast<long_index_t>(i_batch) * kargs.batch_stride_q;
+                batch_offset_k = static_cast<long_index_t>(i_cache_batch) * kargs.batch_stride_k;
+                batch_offset_v = static_cast<long_index_t>(i_cache_batch) * kargs.batch_stride_v;
+                if constexpr(BiasEnum == BlockAttentionBiasEnum::ELEMENTWISE_BIAS)
+                {
+                    batch_offset_bias =
+                        static_cast<long_index_t>(i_batch) * kargs.batch_stride_bias;
+                }
+
+                if(kargs.seqlen_k_ptr != nullptr)
+                {
+                    kargs.seqlen_k = kargs.seqlen_k_ptr[i_batch];
+                }
             }
 
-            if(kargs.seqlen_k_ptr != nullptr)
-            {
-                kargs.seqlen_k = kargs.seqlen_k_ptr[i_batch];
-            }
+            // end
         }
 
-        // PRINT_ONLY_IN_GRID("LMS: seqlen_q: %d, seqlen_k: %d\n", kargs.seqlen_q, kargs.seqlen_k);
         auto k_page_block_navigator = [&, i_batch_ = i_batch, i_nhead_ = i_nhead]() {
             if constexpr(kIsPagedKV)
             {
@@ -623,9 +697,12 @@ struct FmhaFwdSplitKVKernel
                     integer_divide_ceil(kargs.seqlen_k, kargs.page_block_size);
                 // batched ptrs
                 // kv cache has shape: [[n_layer, nheads, block_size, head_dim]
+                // const long_index_t nhead_offset =
+                //     static_cast<long_index_t>(i_nhead_ / kargs.nhead_ratio_qk) *
                 const long_index_t nhead_offset =
                     static_cast<long_index_t>(i_nhead_ / kargs.nhead_ratio_qk) *
                     kargs.nhead_stride_k;
+
                 return PageBlockBatchedPtrNavigator<KDataType, 0>(
                     // reinterpret_cast<KDataType***>(kargs.k_batched_ptr)[i_batch_],
                     kargs.k_batched_ptr[i_batch_],
@@ -667,14 +744,14 @@ struct FmhaFwdSplitKVKernel
                 // kv cache has shape: [[n_layer, nheads, block_size, head_dim]
                 const long_index_t nhead_offset =
                     static_cast<long_index_t>(i_nhead_ / kargs.nhead_ratio_qk) *
-                    kargs.nhead_stride_k;
+                    kargs.nhead_stride_v;
                 return PageBlockBatchedPtrNavigator<VDataType, 0>(
                     // reinterpret_cast<VDataType***>(kargs.v_batched_ptr)[i_batch_],
                     kargs.v_batched_ptr[i_batch_],
                     kargs.v_batched_offset,
                     nhead_offset,
                     kargs.page_block_size,
-                    kargs.stride_k, // FIXME: (lms) check this
+                    kargs.stride_v, // FIXME: (lms) check this
                     num_blocks);
             }
             else
@@ -712,7 +789,7 @@ struct FmhaFwdSplitKVKernel
                                    static_cast<long_index_t>(i_nhead / kargs.nhead_ratio_qk) *
                                        kargs.nhead_stride_v +
                                    batch_offset_v;
-
+        // lms: o_acc: [splits, bs, head_num, seqlen, hd]]
         OaccDataType* o_acc_ptr = reinterpret_cast<OaccDataType*>(kargs.o_acc_ptr) +
                                   static_cast<long_index_t>(i_nhead) * kargs.nhead_stride_o_acc +
                                   batch_offset_o_acc + i_split * kargs.split_stride_o_acc;
@@ -913,12 +990,14 @@ struct FmhaFwdSplitKVKernel
 
         FmhaMask mask = [&]() {
             if constexpr(kHasMask)
+            {
                 return ck_tile::make_generic_attention_mask_from_lr_window<FmhaMask>(
                     kargs.window_size_left,
                     kargs.window_size_right,
                     kargs.seqlen_q,
                     kargs.seqlen_k,
                     kargs.mask_type == GenericAttentionMaskEnum::MASK_FROM_TOP_LEFT);
+            }
             else
                 return FmhaMask{kargs.seqlen_q, kargs.seqlen_k};
         }();

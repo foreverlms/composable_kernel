@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "ck_tile/ops/fmha/print_utils.hpp"
+
 namespace ck_tile {
 
 template <typename TilePartitioner_, typename FmhaPipeline_, typename EpiloguePipeline_>
@@ -116,6 +118,7 @@ struct FmhaFwdSplitKVCombineKernel
           std::conditional_t<kDoFp8StaticQuant, Fp8StaticQuantKargs, EmptyKargs<1>>
     {
         ck_tile::index_t batch_stride_o;
+        const int32_t* seqstart_q_ptr;
     };
 
     struct GroupModeKargs
@@ -151,7 +154,8 @@ struct FmhaFwdSplitKVCombineKernel
               ck_tile::index_t batch_stride_lse,
               ck_tile::index_t batch_stride_o,
               ck_tile::index_t split_stride_lse_acc,
-              ck_tile::index_t split_stride_o_acc)
+              ck_tile::index_t split_stride_o_acc,
+              const void* seqstart_q_ptr)
     {
         Kargs kargs{{lse_acc_ptr,
                      o_acc_ptr,
@@ -172,7 +176,8 @@ struct FmhaFwdSplitKVCombineKernel
                      split_stride_o_acc}, // args for common karg
                     {},                   // placeholder for lse
                     {},                   // placeholder for fp8_static_quant args
-                    batch_stride_o};
+                    batch_stride_o,
+                    reinterpret_cast<const int32_t*>(seqstart_q_ptr)};
 
         if constexpr(kStoreLSE)
         {
@@ -264,6 +269,10 @@ struct FmhaFwdSplitKVCombineKernel
 
     CK_TILE_DEVICE void operator()(Kargs kargs) const
     {
+        // o_accum: [num_splits, batch_size, num_heads, max_seqlen_q, head_size]
+        // lse_accum: [num_splits, batch_size, num_heads, max_seqlen_q]
+        // O: [seqlen (groupmode), head_num, hdim_v]
+        // o_tile: [kM0, hdim_v]
         // allocate LDS
         __shared__ char smem_ptr[GetSmemSize()];
 
@@ -280,6 +289,12 @@ struct FmhaFwdSplitKVCombineKernel
             static_cast<long_index_t>(i_batch) * kargs.batch_stride_o_acc;
         long_index_t batch_offset_lse = 0;
         long_index_t batch_offset_o   = 0;
+
+        bool use_batched_ptrs = false;
+        if(kargs.seqstart_q_ptr != nullptr)
+        {
+            use_batched_ptrs = true;
+        }
 
         if constexpr(kStoreLSE)
         {
@@ -306,7 +321,28 @@ struct FmhaFwdSplitKVCombineKernel
         }
         else
         {
-            batch_offset_o = static_cast<long_index_t>(i_batch) * kargs.batch_stride_o;
+            if(use_batched_ptrs)
+            {
+                // get starting offset for each batch
+                const long_index_t query_start = kargs.seqstart_q_ptr[i_batch];
+
+                batch_offset_o = query_start * kargs.row_stride_o;
+
+                // get real # queries & # keys under group mode
+                const auto adjusted_seqstart_q_ptr = kargs.seqstart_q_ptr + i_batch;
+                kargs.seqlen_q = adjusted_seqstart_q_ptr[1] - adjusted_seqstart_q_ptr[0];
+
+                // # of required blocks is different in each groups, terminate unnecessary blocks
+                // earlier
+                if(kargs.seqlen_q <= i_m0)
+                {
+                    return;
+                }
+            }
+            else
+            {
+                batch_offset_o = static_cast<long_index_t>(i_batch) * kargs.batch_stride_o;
+            }
         }
 
         // for simplicity, batch stride we just modify the pointer
