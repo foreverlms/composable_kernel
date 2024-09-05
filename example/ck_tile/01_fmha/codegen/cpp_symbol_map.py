@@ -9,22 +9,23 @@ DTYPE_MAP = {
 }
 
 MASK_IMPL = {
-    "generic" : "ck_tile::GenericAttentionMask",
-    "simplified"  : "ck_tile::SimplifiedGenericAttentionMask"
+    "generic": "ck_tile::GenericAttentionMask",
+    "simplified": "ck_tile::SimplifiedGenericAttentionMask",
 }
 
 _MASK_SIMPLIFIED_MAP = {
-    "s_no" : "ck_tile::SimplifiedGenericAttentionMask<false>",
-    "s_mask" : "ck_tile::SimplifiedGenericAttentionMask<true>",
+    "s_no": "ck_tile::SimplifiedGenericAttentionMask<false>",
+    "s_mask": "ck_tile::SimplifiedGenericAttentionMask<true>",
 }
 
 _MASK_MAP = {
-    "no" : "FmhaMasks::NoMask",
-    "causal" : "FmhaMasks::CausalMask",
-    "generic" : "FmhaMasks::GenericMask"
+    "no": "FmhaMasks::NoMask",
+    "causal": "FmhaMasks::CausalMask",
+    "generic": "FmhaMasks::GenericMask",
 }
 
-def get_mask_map(mask : str):
+
+def get_mask_map(mask: str):
     if mask == "generic":
         return _MASK_MAP
     elif mask == "simplified":
@@ -33,18 +34,20 @@ def get_mask_map(mask : str):
         assert False
         return None
 
+
 _MASK_CHECK_MAP = {
-    "no" : "t.mask_type == mask_enum::no_mask",
-    "causal" : "t.mask_type == mask_enum::mask_top_left || t.mask_type == mask_enum::mask_bottom_right",
-    "generic" : "t.mask_type == mask_enum::window_generic",
+    "no": "t.mask_type == mask_enum::no_mask",
+    "causal": "t.mask_type == mask_enum::mask_top_left || t.mask_type == mask_enum::mask_bottom_right",
+    "generic": "t.mask_type == mask_enum::window_generic",
 }
 
 _MASK_SIMPLIFIED_CHECK_MAP = {
-    "s_no" : "t.mask_type == mask_enum::no_mask",
-    "s_mask" : "t.mask_type != mask_enum::no_mask",
+    "s_no": "t.mask_type == mask_enum::no_mask",
+    "s_mask": "t.mask_type != mask_enum::no_mask",
 }
 
-def get_mask_check_map(mask : str):
+
+def get_mask_check_map(mask: str):
     if mask == "generic":
         return _MASK_CHECK_MAP
     elif mask == "simplified":
@@ -53,28 +56,29 @@ def get_mask_check_map(mask : str):
         assert False
         return None
 
+
 BIAS_MAP = {
-    "no" : "ck_tile::BlockAttentionBiasEnum::NO_BIAS",
+    "no": "ck_tile::BlockAttentionBiasEnum::NO_BIAS",
     # "bias"  : "ck_tile::BlockAttentionBiasEnum::ELEMENTWISE_BIAS",
     # "alibi" : "ck_tile::BlockAttentionBiasEnum::ALIBI"
 }
 
 # TODO: this is ugly
 BIAS_CHECK_MAP = {
-    "no" : "bias_enum::no_bias",
+    "no": "bias_enum::no_bias",
     # "bias"  : "bias_enum::elementwise_bias",
     # "alibi" : "bias_enum::alibi"
 }
 
 ROPE_MAP = {
-    "no" : "ck_tile::RotaryEmbeddingEnum::NONE",
+    "no": "ck_tile::RotaryEmbeddingEnum::NONE",
     # "inter"  : "ck_tile::RotaryEmbeddingEnum::INTERLEAVED",
     # "half" : "ck_tile::RotaryEmbeddingEnum::HALF_ROTATED"
 }
 
 # TODO: avoid duplication
 ROPE_CHECK_MAP = {
-    "no" : "rope_enum::none",
+    "no": "rope_enum::none",
     # "inter"  : "rope_enum::interleaved",
     # "half" : "rope_enum::half_rotated"
 }
@@ -103,3 +107,7 @@ BOOL_MAP = {
     "t" : "true",
     "f" : "false"
 }
+
+XQA_ENABLE_MAP = {"t": "true", "f": "false"}
+
+XQA_READY_MAP = {"t": "true"}

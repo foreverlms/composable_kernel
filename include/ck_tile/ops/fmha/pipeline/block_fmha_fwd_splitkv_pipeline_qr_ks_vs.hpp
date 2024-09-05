@@ -52,6 +52,8 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
     static constexpr bool kStoreLSE        = true; // always store LSE (acc)
     static constexpr bool kIsPagedKV       = Problem::kIsPagedKV;
     static constexpr bool kHasUnevenSplits = Problem::kHasUnevenSplits;
+    static constexpr bool kXQA_ready       = Problem::kXQA_ready;
+    static constexpr bool kXQA_ENABLED     = Problem::kXQA_enabled;
 
     // last dimension vector length used to create tensor view(and decide buffer_load vector length)
     // ... together with tensor distribution. tensor dist should able to overwrite this
@@ -448,7 +450,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
                                                            k_origin.at(number<0>{}),
                                                            number<kM0>{},
                                                            number<kN0>{});
-                if(need_perpixel_check)
+                if(need_perpixel_check && !kXQA_ENABLED) // FIXME: (lms) We shou
                 {
                     set_tile_if(
                         s_acc, -numeric<SMPLComputeDataType>::infinity(), [&](auto tile_idx) {

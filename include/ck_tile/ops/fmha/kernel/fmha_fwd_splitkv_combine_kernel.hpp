@@ -27,6 +27,8 @@ struct FmhaFwdSplitKVCombineKernel
     static constexpr bool kPadHeadDimV      = FmhaPipeline::kPadHeadDimV;
     static constexpr bool kStoreLSE         = FmhaPipeline::kStoreLSE;
     static constexpr bool kDoFp8StaticQuant = FmhaPipeline::Problem::kDoFp8StaticQuant;
+    static constexpr bool kXQA_enabled      = FmhaPipeline::Problem::kXQA_enabled;
+    static constexpr bool kXQA_ready        = FmhaPipeline::Problem::kXQA_ready;
 
     // clang-format off
     template <typename T> struct t2s;
@@ -111,14 +113,22 @@ struct FmhaFwdSplitKVCombineKernel
     {
         float scale_o;
     };
+    // struct XQAKargs
+    // {
+    //     ck_tile::index_t xqa_ratio = 1;
+    // };
 
     struct BatchModeKargs
         : CommonKargs,
           std::conditional_t<kStoreLSE, CommonLSEKargs, EmptyKargs<0>>,
           std::conditional_t<kDoFp8StaticQuant, Fp8StaticQuantKargs, EmptyKargs<1>>
+    //   std::conditional_t<kXQA_enabled, XQAKargs, EmptyKargs<2>>
     {
         ck_tile::index_t batch_stride_o;
         const int32_t* seqstart_q_ptr;
+
+        bool xqa_enabled;
+        ck_tile::index_t xqa_ratio;
     };
 
     struct GroupModeKargs
@@ -155,7 +165,9 @@ struct FmhaFwdSplitKVCombineKernel
               ck_tile::index_t batch_stride_o,
               ck_tile::index_t split_stride_lse_acc,
               ck_tile::index_t split_stride_o_acc,
-              const void* seqstart_q_ptr)
+              const void* seqstart_q_ptr,
+              const bool xqa_enabled,
+              ck_tile::index_t xqa_ratio)
     {
         Kargs kargs{{lse_acc_ptr,
                      o_acc_ptr,
@@ -177,7 +189,9 @@ struct FmhaFwdSplitKVCombineKernel
                     {},                   // placeholder for lse
                     {},                   // placeholder for fp8_static_quant args
                     batch_stride_o,
-                    reinterpret_cast<const int32_t*>(seqstart_q_ptr)};
+                    reinterpret_cast<const int32_t*>(seqstart_q_ptr),
+                    xqa_enabled,
+                    xqa_ratio};
 
         if constexpr(kStoreLSE)
         {
@@ -189,6 +203,11 @@ struct FmhaFwdSplitKVCombineKernel
         {
             kargs.scale_o = scale_o;
         }
+
+        // if constexpr(kXQA_enabled)
+        // {
+        //     kargs.xqa_ratio = xqa_ratio;
+        // }
 
         return kargs;
     }
@@ -338,6 +357,15 @@ struct FmhaFwdSplitKVCombineKernel
                 {
                     return;
                 }
+                if(kargs.xqa_enabled)
+                {
+                    kargs.seqlen_q *= kargs.xqa_ratio;
+                }
+                // if constexpr(kXQA_enabled)
+                // {
+                //     kargs.seqlen_q *= kargs.xqa_ratio;
+                // }
+                // PRINT_ONLY_IN_GRID("LMS: kargs.seqlen_q in combine: %d\n", kargs.seqlen_q);
             }
             else
             {

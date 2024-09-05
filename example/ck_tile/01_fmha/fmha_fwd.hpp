@@ -224,6 +224,11 @@ struct fmha_fwd_splitkv_args
     void*** __restrict__ v_batched_ptr = nullptr;
     ck_tile::index_t k_batched_offset  = 0;
     ck_tile::index_t v_batched_offset  = 0;
+
+    bool xqa_enabled                 = false;
+    bool xqa_ready                   = false;
+    ck_tile::index_t xqa_ratio       = 1;
+    ck_tile::index_t nhead_q_k_ratio = 1;
 };
 
 struct fmha_fwd_appendkv_args
@@ -389,7 +394,8 @@ auto fmha_fwd_splitkv_create_kargs_and_grids(fmha_fwd_splitkv_args args)
                                      args.hdim_q,
                                      args.hdim_v,
                                      args.nhead_q,
-                                     args.nhead_q / args.nhead_k,
+                                     args.nhead_k,
+                                     args.nhead_q_k_ratio,
                                      args.num_splits,
                                      args.scale_s,
                                      args.scale_p,
@@ -434,7 +440,8 @@ auto fmha_fwd_splitkv_create_kargs_and_grids(fmha_fwd_splitkv_args args)
                                      args.hdim_q,
                                      args.hdim_v,
                                      args.nhead_q,
-                                     args.nhead_q / args.nhead_k,
+                                     args.nhead_k,
+                                     args.nhead_q_k_ratio,
                                      args.num_splits,
                                      args.block_table_ptr,
                                      args.batch_stride_block_table,
@@ -469,7 +476,8 @@ auto fmha_fwd_splitkv_create_kargs_and_grids(fmha_fwd_splitkv_args args)
                                      args.k_batched_offset,
                                      args.v_batched_offset,
                                      args.seqstart_q_ptr,
-                                     args.seqstart_k_ptr);
+                                     args.seqstart_k_ptr,
+                                     args.xqa_ratio);
         }
     }();
 
@@ -533,7 +541,9 @@ auto fmha_fwd_splitkv_combine_create_kargs_and_grids(fmha_fwd_splitkv_args args)
                                      args.batch_stride_o,
                                      args.split_stride_lse_acc,
                                      args.split_stride_o_acc,
-                                     args.seqstart_q_ptr);
+                                     args.seqstart_q_ptr,
+                                     args.xqa_enabled,
+                                     args.xqa_ratio);
         }
     }();
 
@@ -653,7 +663,9 @@ template <ck_tile::index_t HDim_,
           bool kPadS_,
           bool kPadSK_,
           bool kPadD_,
-          bool kPadDv_>
+          bool kPadDv_,
+          bool kXQA_READY_,
+          bool kXQA_ENABLED_>
 struct fmha_fwd_splitkv_traits_
 {
     static constexpr ck_tile::index_t HDim           = HDim_;
@@ -774,6 +786,8 @@ struct fmha_fwd_splitkv_traits
     bias_enum bias_type; // 0:no bias, 1:elementwise bias, 2:alibi. sync with BlockAttentionBiasEnum
     bool has_lse;
     bool do_fp8_static_quant;
+    bool xqa_ready;
+    bool xqa_enabled;
     // TODO: padding check is inside this api
 };
 float fmha_fwd_splitkv(fmha_fwd_splitkv_traits,
