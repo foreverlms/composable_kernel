@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "ck_tile/ops/fmha/print_utils.hpp"
+
 namespace ck_tile {
 
 template <typename TilePartitioner_, typename FmhaPipeline_, typename EpiloguePipeline_>
@@ -25,6 +27,8 @@ struct FmhaFwdSplitKVCombineKernel
     static constexpr bool kPadHeadDimV      = FmhaPipeline::kPadHeadDimV;
     static constexpr bool kStoreLSE         = FmhaPipeline::kStoreLSE;
     static constexpr bool kDoFp8StaticQuant = FmhaPipeline::Problem::kDoFp8StaticQuant;
+    static constexpr bool kXQA_enabled      = FmhaPipeline::Problem::kXQA_enabled;
+    static constexpr bool kXQA_ready        = FmhaPipeline::Problem::kXQA_ready;
 
     // clang-format off
     template <typename T> struct t2s;
@@ -116,6 +120,10 @@ struct FmhaFwdSplitKVCombineKernel
     {
         ck_tile::index_t batch_stride_o;
         ck_tile::index_t batch_stride_lse_acc;
+
+        const int32_t* seqstart_q_ptr;
+        bool xqa_enabled;
+        ck_tile::index_t xqa_ratio;
     };
 
     struct GroupModeKargs
@@ -151,7 +159,10 @@ struct FmhaFwdSplitKVCombineKernel
               ck_tile::index_t batch_stride_lse,
               ck_tile::index_t batch_stride_o,
               ck_tile::index_t split_stride_lse_acc,
-              ck_tile::index_t split_stride_o_acc)
+              ck_tile::index_t split_stride_o_acc,
+              const void* seqstart_q_ptr,
+              const bool xqa_enabled,
+              ck_tile::index_t xqa_ratio)
     {
         Kargs kargs{{lse_acc_ptr,
                      o_acc_ptr,
@@ -172,7 +183,10 @@ struct FmhaFwdSplitKVCombineKernel
                     {},                   // placeholder for lse
                     {},                   // placeholder for fp8_static_quant args
                     batch_stride_o,
-                    batch_stride_lse_acc};
+                    batch_stride_lse_acc,
+                    reinterpret_cast<const int32_t*>(seqstart_q_ptr),
+                    xqa_enabled,
+                    xqa_ratio};
 
         if constexpr(kStoreLSE)
         {
@@ -260,6 +274,10 @@ struct FmhaFwdSplitKVCombineKernel
 
     CK_TILE_DEVICE void operator()(Kargs kargs) const
     {
+        // o_accum: [num_splits, batch_size, num_heads, max_seqlen_q, head_size]
+        // lse_accum: [num_splits, batch_size, num_heads, max_seqlen_q]
+        // O: [seqlen (groupmode), head_num, hdim_v]
+        // o_tile: [kM0, hdim_v]
         // allocate LDS
         __shared__ char smem_ptr[GetSmemSize()];
 
@@ -276,6 +294,12 @@ struct FmhaFwdSplitKVCombineKernel
         long_index_t batch_offset_lse_acc = 0;
         long_index_t batch_offset_lse     = 0;
         long_index_t batch_offset_o       = 0;
+
+        bool use_batched_ptrs = false;
+        if(kargs.seqstart_q_ptr != nullptr)
+        {
+            use_batched_ptrs = true;
+        }
 
         if constexpr(kIsGroupMode)
         {
@@ -303,8 +327,40 @@ struct FmhaFwdSplitKVCombineKernel
         }
         else
         {
-            batch_offset_o       = static_cast<long_index_t>(i_batch) * kargs.batch_stride_o;
-            batch_offset_lse_acc = static_cast<long_index_t>(i_batch) * kargs.batch_stride_lse_acc;
+            if(use_batched_ptrs)
+            {
+                // get starting offset for each batch
+                const long_index_t query_start = kargs.seqstart_q_ptr[i_batch];
+
+                batch_offset_o = query_start * kargs.row_stride_o;
+                //FIXME: (lms) add batch_stride_lse_acc
+
+                // get real # queries & # keys under group mode
+                const auto adjusted_seqstart_q_ptr = kargs.seqstart_q_ptr + i_batch;
+                kargs.seqlen_q = adjusted_seqstart_q_ptr[1] - adjusted_seqstart_q_ptr[0];
+
+                // # of required blocks is different in each groups, terminate unnecessary blocks
+                // earlier
+                if(kargs.seqlen_q <= i_m0)
+                {
+                    return;
+                }
+                if(kargs.xqa_enabled)
+                {
+                    kargs.seqlen_q *= kargs.xqa_ratio;
+                }
+                // if constexpr(kXQA_enabled)
+                // {
+                //     kargs.seqlen_q *= kargs.xqa_ratio;
+                // }
+                // PRINT_ONLY_IN_GRID("LMS: kargs.seqlen_q in combine: %d\n", kargs.seqlen_q);
+            }
+            else
+            {
+                batch_offset_o = static_cast<long_index_t>(i_batch) * kargs.batch_stride_o;
+                batch_offset_lse_acc =
+                    static_cast<long_index_t>(i_batch) * kargs.batch_stride_lse_acc;
+            }
 
             if constexpr(kStoreLSE)
             {

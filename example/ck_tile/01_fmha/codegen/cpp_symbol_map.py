@@ -4,8 +4,8 @@
 
 DTYPE_MAP = {
     "fp16": "ck_tile::fp16_t",
-    "bf16": "ck_tile::bf16_t",
-    "fp8" : "ck_tile::fp8_t"
+    # "bf16": "ck_tile::bf16_t",
+    # "fp8" : "ck_tile::fp8_t"
 }
 
 MASK_IMPL = {
@@ -55,48 +55,48 @@ def get_mask_check_map(mask : str):
 
 BIAS_MAP = {
     "no" : "ck_tile::BlockAttentionBiasEnum::NO_BIAS",
-    "bias"  : "ck_tile::BlockAttentionBiasEnum::ELEMENTWISE_BIAS",
-    "alibi" : "ck_tile::BlockAttentionBiasEnum::ALIBI"
+    # "bias"  : "ck_tile::BlockAttentionBiasEnum::ELEMENTWISE_BIAS",
+    # "alibi" : "ck_tile::BlockAttentionBiasEnum::ALIBI"
 }
 
 # TODO: this is ugly
 BIAS_CHECK_MAP = {
     "no" : "bias_enum::no_bias",
-    "bias"  : "bias_enum::elementwise_bias",
-    "alibi" : "bias_enum::alibi"
+    # "bias"  : "bias_enum::elementwise_bias",
+    # "alibi" : "bias_enum::alibi"
 }
 
 DROPOUT_MAP = {
     "no"                        : "ck_tile::BlockDropoutBwd<false, true,  false>",
-    "dropout_wg32"              : "ck_tile::BlockDropoutBwd<true,  true,  false>",
-    "dropout_wg32_storerandval" : "ck_tile::BlockDropoutBwd<true,  true,  true >",
-    "dropout_wg16"              : "ck_tile::BlockDropoutBwd<true,  false, false>",
-    "dropout_wg16_storerandval" : "ck_tile::BlockDropoutBwd<true,  false, true >"
+    # "dropout_wg32"              : "ck_tile::BlockDropoutBwd<true,  true,  false>",
+    # "dropout_wg32_storerandval" : "ck_tile::BlockDropoutBwd<true,  true,  true >",
+    # "dropout_wg16"              : "ck_tile::BlockDropoutBwd<true,  false, false>",
+    # "dropout_wg16_storerandval" : "ck_tile::BlockDropoutBwd<true,  false, true >"
 }
 
 DROPOUT_CHECK_MAP = {
     "no"                        : "t.has_dropout == false",
-    "dropout_wg32"              : "t.has_dropout == true && t.is_store_randval == false",
-    "dropout_wg32_storerandval" : "t.has_dropout == true && t.is_store_randval == true",
-    "dropout_wg16"              : "t.has_dropout == true && t.is_store_randval == false",
-    "dropout_wg16_storerandval" : "t.has_dropout == true && t.is_store_randval == true",
+    # "dropout_wg32"              : "t.has_dropout == true && t.is_store_randval == false",
+    # "dropout_wg32_storerandval" : "t.has_dropout == true && t.is_store_randval == true",
+    # "dropout_wg16"              : "t.has_dropout == true && t.is_store_randval == false",
+    # "dropout_wg16_storerandval" : "t.has_dropout == true && t.is_store_randval == true",
 }
 
 ROPE_MAP = {
     "no" : "ck_tile::RotaryEmbeddingEnum::NONE",
-    "inter"  : "ck_tile::RotaryEmbeddingEnum::INTERLEAVED",
-    "half" : "ck_tile::RotaryEmbeddingEnum::HALF_ROTATED"
+    # "inter"  : "ck_tile::RotaryEmbeddingEnum::INTERLEAVED",
+    # "half" : "ck_tile::RotaryEmbeddingEnum::HALF_ROTATED"
 }
 
 ROPE_CHECK_MAP = {
     "no"    : "rope_enum::none",
-    "inter" : "rope_enum::interleaved",
-    "half"  : "rope_enum::half_rotated"
+    # "inter" : "rope_enum::interleaved",
+    # "half"  : "rope_enum::half_rotated"
 }
 
 MODE_MAP = {
     "batch" : "false",
-    "group" : "true"
+    # "group" : "true"
 }
 
 LAYOUT_MAP = {
@@ -118,3 +118,8 @@ BOOL_MAP = {
     "t" : "true",
     "f" : "false"
 }
+
+
+XQA_ENABLE_MAP = {"t": "true", "f": "false"}
+
+XQA_READY_MAP = {"t": "true"}

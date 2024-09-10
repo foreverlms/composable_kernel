@@ -62,7 +62,10 @@ using fmha_trait = ck_tile::TileFmhaFwdSplitKVTraits<{F_spad},
                                                      {F_squant},
                                                      {F_pagedkv},
                                                      kHasUnevenSplits,
-                                                     {F_occupancy}>;
+                                                     {F_occupancy},
+                                                     {F_XQA_READY},
+                                                     {F_XQA_ENABLED}
+                                                     >;
 
 using fmha_pipeline_problem = ck_tile::BlockFmhaFwdSplitKVPipelineProblem<
     typename FmhaFwdTypeConfig<fmha_dtype_{F_idx}>::QDataType,
@@ -106,7 +109,7 @@ static void run(const ck_tile::stream_config& s, fmha_fwd_splitkv_args a)
 
 using trait_{F_idx} = fmha_fwd_splitkv_traits_<{F_hdim}, {F_dtype}, {F_mode}, {F_bm0}, {F_bn0}, {F_bk0}, {F_bn1}, {F_bk1}, {F_bk0blen}, {F_vlayout},
                         {F_pipeline_enum}, fmha_mask_{F_idx}, {F_bias}, {F_lse}, {F_squant}, {F_pagedkv}, {F_spad}, {F_skpad}, {F_dpad}, 
-                        {F_dvpad}>;
+                        {F_dvpad}, {F_XQA_READY}, {F_XQA_ENABLED}>;
 
 #include <iostream>
 
@@ -239,7 +242,7 @@ float fmha_fwd_splitkv(fmha_fwd_splitkv_traits t, fmha_fwd_splitkv_args a, const
 FMHA_FWD_SPLITKV_API_INNER_DISPATCH="""            {F_if}((t.is_group_mode == {F_mode}) && (t.is_v_rowmajor == {F_vlayout}) && ({F_mask_check}) && (t.bias_type == {F_bias_check}) && (t.has_lse == {F_lse}) && (t.do_fp8_static_quant == {F_squant}) &&
                         ((a.block_table_ptr != nullptr) == {F_pagedkv}) && ({F_scheck}) && ({F_skcheck}) && ({F_dcheck}) && ({F_dvcheck})) {{
                 using traits_ = fmha_fwd_splitkv_traits_<{F_hdim}, {F_dtype}, {F_mode}, {F_bm0}, {F_bn0}, {F_bk0}, {F_bn1}, {F_bk1}, {F_bk0blen}, {F_vlayout}, {F_pipeline_enum}, {F_mask}, {F_bias}, {F_lse}, {F_squant}, {F_pagedkv}, {F_spad}, {F_skpad}, {F_dpad}, {F_dvpad}>;
-                using traits2_ = fmha_fwd_splitkv_combine_traits_<{F_hdim}, {F_dtype}, {F_mode}, {F_bm0}/2, {F_bn1}, {F_lse}, {F_squant}, {F_spad}, {F_dvpad}>;
+                using traits2_ = fmha_fwd_splitkv_combine_traits_<{F_hdim}, {F_dtype}, {F_mode}, {F_bm0}/2, {F_bn1}, {F_lse}, {F_squant}, {F_spad}, {F_dvpad},{F_XQA_READY}, {F_XQA_ENABLED}>;
 
                 return fmha_fwd_splitkv_<traits_, traits2_>(s, a);
             }}
@@ -268,12 +271,14 @@ class FmhaFwdSplitKVApiTrait:
     dpad      : str
     dvpad     : str
     pagedkv : str
+    xqa_ready : str
+    xqa_enabled : str
 
     @property
     def name(self) -> str:
         return f'{self.hdim}-{self.dtype}-{self.mode}-{self.bm0}-{self.bn0}-{self.bk0}-{self.bn0}-{self.bk1}-{self.bk0blen}-'+\
                     f'{self.vlayout}-{self.mask}-{self.bias}-{self.lse}-{self.squant}-{self.spad}-{self.skpad}-{self.dpad}-'+\
-                    f'{self.dvpad}-{self.pagedkv}'
+                    f'{self.dvpad}-{self.pagedkv}-{self.xqa_ready}-{self.xqa_enabled}'
 
     @property
     def scheck(self) -> str:
@@ -412,7 +417,7 @@ class FmhaFwdSplitKVApiPool:
                                    F_scheck=trait.scheck, F_skcheck=trait.skcheck, F_dcheck=trait.dcheck, F_dvcheck=trait.dvcheck,
                                    F_spad=BOOL_MAP[trait.spad], F_skpad=BOOL_MAP[trait.skpad], F_dpad=BOOL_MAP[trait.dpad], F_dvpad=BOOL_MAP[trait.dvpad],
                                    F_bm0=trait.bm0, F_bn0=trait.bn0, F_bk0=trait.bk0, F_bn1=trait.bn1, F_bk1=trait.bk1, F_bk0blen=trait.bk0blen,
-                                   F_hdim=hdim, F_dtype=DTYPE_MAP[dtype])
+                                   F_hdim=hdim, F_dtype=DTYPE_MAP[dtype],F_XQA_READY = XQA_READY_MAP[trait.xqa_ready], F_XQA_ENABLED = XQA_ENABLE_MAP[trait.xqa_enabled])
                 if_j = 'if' if j == 0 else 'else if'
                 per_hdim_case = per_hdim_case + FMHA_FWD_API_PER_HDIM_CASE.format(F_if=if_j, F_hdim=hdim, F_inner_dispatch=inners)
             if_i = 'if' if i == 0 else 'else if'
@@ -441,6 +446,8 @@ class FmhaFwdSplitKVKernel:
     F_tile          : FmhaFwdTileSize
     F_pipeline      : FmhaFwdSplitKVPipeline
     mask_impl       : str
+    F_XQA_READY     : str
+    F_XQA_ENABLED    : str
 
     @property
     def template(self) -> str:
@@ -475,13 +482,15 @@ class FmhaFwdSplitKVKernel:
                 F_pipeline_enum = PIPELINE_ENUM_MAP[self.F_pipeline.tag],
                 F_mask          = get_mask_map(self.mask_impl)[self.F_pipeline.F_mask],
                 F_mode          = MODE_MAP[self.F_mode],
-                F_pipeline      = FMHA_FWD_SPLITKV_PIPELINE_MAP[self.F_pipeline.tag])
+                F_pipeline      = FMHA_FWD_SPLITKV_PIPELINE_MAP[self.F_pipeline.tag],
+                F_XQA_READY     = XQA_READY_MAP[self.F_XQA_READY],
+                F_XQA_ENABLED    = XQA_ENABLE_MAP[self.F_XQA_ENABLED])
 
     @property
     def name(self) -> str:
         # TODO: we don't encode idx here
         return f"fmha_fwd_splitkv_d{self.F_hdim}_{self.F_dtype}_{self.F_mode}_" + \
-                self.F_tile.name + '_' + self.F_pipeline.name
+                self.F_tile.name + '_' + f"{self.F_XQA_READY}_{self.F_XQA_ENABLED}" + "_" + self.F_pipeline.name
 
     @property
     def filename(self) -> str:
@@ -508,7 +517,9 @@ class FmhaFwdSplitKVKernel:
                 spad=self.F_pipeline.F_spad,
                 skpad=self.F_pipeline.F_skpad,
                 dpad=self.F_pipeline.F_dpad,
-                dvpad=self.F_pipeline.F_dvpad)
+                dvpad=self.F_pipeline.F_dvpad,
+                xqa_ready = self.F_XQA_READY,
+                xqa_enabled= self.F_XQA_ENABLED)
 
 @dataclass
 class FmhaFwdSplitKVCombineKernel:
@@ -551,10 +562,10 @@ class FmhaFwdSplitKVCombineKernel:
 def get_fmha_fwd_tile_dict_from_dtype(dtype : str) -> Optional[dict]:
     if dtype == 'fp16' or dtype == 'bf16':
         return {
-                '32'  : FmhaFwdTileSize(128, 64, 16, 32, 32, 32,     2, 1, 1, 32, 32, 16, -1),
-                '64'  : FmhaFwdTileSize(128, 64, 32, 64, 32, 64,     4, 1, 1, 32, 32, 16, -1),
+                # '32'  : FmhaFwdTileSize(128, 64, 16, 32, 32, 32,     2, 1, 1, 32, 32, 16, -1),
+                # '64'  : FmhaFwdTileSize(128, 64, 32, 64, 32, 64,     4, 1, 1, 32, 32, 16, -1),
                 '128' : FmhaFwdTileSize(128, 128, 32, 128, 32, 128,  4, 1, 1, 32, 32, 16, -1),
-                '256' : FmhaFwdTileSize(128, 128, 32, 256, 32, 256,  4, 1, 1, 32, 32, 16, -1),
+                # '256' : FmhaFwdTileSize(128, 128, 32, 256, 32, 256,  4, 1, 1, 32, 32, 16, -1),
         }
     elif dtype == 'fp8' or dtype == 'bf8':
         return {
@@ -568,10 +579,10 @@ def get_fmha_fwd_tile_dict_from_dtype(dtype : str) -> Optional[dict]:
 def get_fmha_fwd_splitkv_combine_tile_dict_from_dtype(dtype : str) -> Optional[dict]:
     if dtype == 'fp16' or dtype == 'bf16':
         return {
-                '32'  : FmhaFwdSplitKVCombineTileSize(64, 32, -1),
-                '64'  : FmhaFwdSplitKVCombineTileSize(64, 64, -1),
+                # '32'  : FmhaFwdSplitKVCombineTileSize(64, 32, -1),
+                # '64'  : FmhaFwdSplitKVCombineTileSize(64, 64, -1),
                 '128' : FmhaFwdSplitKVCombineTileSize(64, 128, -1),
-                '256' : FmhaFwdSplitKVCombineTileSize(64, 256, -1),
+                # '256' : FmhaFwdSplitKVCombineTileSize(64, 256, -1),
     }
     elif dtype == 'fp8' or dtype == 'bf8':
         return {
@@ -629,7 +640,7 @@ def get_fwd_splitkv_blobs(kernel_filter : Optional[str], receipt, mask_impl) -> 
         if d == None:
             continue
         #for hdim_str, mode, mask, bias, lse in itertools.product(d.keys(), MODE_MAP.keys(), MASK_MAP.keys(), ["t", "f"], ["t", "f"]):
-        for hdim_str, mode in itertools.product(d.keys(), MODE_MAP.keys()):
+        for hdim_str, mode , xqa_ready, xqa_enabled in itertools.product(d.keys(), MODE_MAP.keys(), XQA_READY_MAP.keys(), XQA_ENABLE_MAP.keys()):
             tile = d[hdim_str]
             hdim = int(hdim_str)
             for pipeline in get_pipelines(dtype, hdim):
@@ -646,7 +657,9 @@ def get_fwd_splitkv_blobs(kernel_filter : Optional[str], receipt, mask_impl) -> 
                            F_mode=mode,
                            F_tile=tile,
                            F_pipeline=pipeline,
-                           mask_impl=mask_impl)
+                           mask_impl=mask_impl,
+                           F_XQA_READY=xqa_ready,
+                           F_XQA_ENABLED=xqa_enabled)
                 if kernel_filter != None:
                     if not fnmatch.fnmatch(k.name, kernel_filter):
                         continue
