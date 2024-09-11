@@ -110,4 +110,4 @@ BOOL_MAP = {
 
 XQA_ENABLE_MAP = {"t": "true", "f": "false"}
 
-XQA_READY_MAP = {"t": "true"}
+XQA_READY_MAP = {"t": "true", "f": "false"}
