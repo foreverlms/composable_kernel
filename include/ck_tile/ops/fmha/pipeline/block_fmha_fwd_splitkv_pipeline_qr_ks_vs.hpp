@@ -160,7 +160,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
                           kM0 == BiasDramBlockWindowTmp{}.get_window_lengths()[number<0>{}] &&
                           kN0 == BiasDramBlockWindowTmp{}.get_window_lengths()[number<1>{}],
                       "wrong!");
-
+        // PRINT_ONLY_IN_GRID("*sk*\n");
         // K tile in LDS
         KDataType* k_lds_ptr = static_cast<KDataType*>(static_cast<void*>(
             static_cast<char*>(smem_ptr) + Policy::template GetSmemSizeQ<Problem>()));
@@ -188,6 +188,8 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
             Policy::template MakeQDramTileDistribution<Problem, decltype(gemm_0)>());
 
         auto q = load_tile(q_dram_window);
+
+        // PRINT_ONLY_IN_GRID("*0ldq*\n");
 
         using SaccBlockTileType = decltype(gemm_0.MakeCBlockTile());
         auto s_acc              = SaccBlockTileType{}; // lms: S Acc Type
@@ -218,6 +220,8 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
         // lms: range of seqlen_k that current thread blocks process.
         const auto [seqlen_k_start, seqlen_k_end] = mask.GetTileRangeAlongX(
             q_origin.at(number<0>{}), number<kM0>{}, number<kN0>{}, num_splits, i_split);
+
+        // PRINT_ONLY_IN_GRID("*0mask_t*\n");
 
         // make sure the first tile is completely located in page-block
         const index_t adjusted_seqlen_k_start = [&, seqlen_k_start_ = seqlen_k_start] {
@@ -266,6 +270,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
             }
         }
 
+        // PRINT_ONLY_IN_GRID("*1pagekv*\n");
         auto [i_page_block_k, k_dram_block_window] = k_page_block_navigator.make_tile_window(
             k_dram_block_window_tmp, {adjusted_seqlen_k_start, 0});
 
@@ -282,6 +287,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
             Policy::template MakeVDramTileDistribution<Problem>());
 
         auto q_tile = tile_elementwise_in(q_element_func, q);
+        // PRINT_ONLY_IN_GRID("*0pagekv*\n");
 
         // prefetch K tile
         index_t i_total_loops      = 0;
@@ -349,6 +355,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
                 });
             }
 
+            // PRINT_ONLY_IN_GRID("LMS: after load tile\n");
             const auto v_prefetch = load_tile(v_dram_window); // prefetch load v tile
             {                                                 // tail
                 block_sync_lds();
@@ -369,6 +376,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
                        k_lds_window);
             }
 
+            // PRINT_ONLY_IN_GRID("LMS: after QK Gemm\n");
             // lms: above is loop in QK gemm head_dim kK0.
             // STAGE 2, scale_s, add bias, mask, softmax
             if constexpr(BiasEnum == BlockAttentionBiasEnum::ELEMENTWISE_BIAS)
@@ -441,6 +449,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
             }
 
             // lms: Masking
+            // PRINT_ONLY_IN_GRID("LMS: before mask\n");
             if constexpr(kPadSeqLenK || FmhaMask::IsMasking)
             {
                 // lms: associated with paged KV
@@ -461,6 +470,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
                 }
             }
 
+            // PRINT_ONLY_IN_GRID("LMS: after mask\n!");
             const auto s = cast_tile<SMPLComputeDataType>(s_acc); // S{j}
             auto m_local = block_tile_reduce<SMPLComputeDataType>(
                 s,
@@ -574,7 +584,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
 
             const auto p =
                 cast_tile<PDataType>(tile_elementwise_in(p_compute_element_func, p_compute));
-
+            // PRINT_ONLY_IN_GRID("LMS: before KV Gemm\n");
             // STAGE 3, KV gemm
             if constexpr(k1_loops > 1) // lms: KV Gemm 1
             {
@@ -612,6 +622,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
                 k_dram_block_window,
                 {kN0, 0}); // lms: to next K tile {KN0}, if in the same page block, i_page_block_k
                            // won't change.
+            // lms: beacause kN1 is always equal to headDim V, so we do not need to move v tile window.
             // tail
             {
                 block_sync_lds();

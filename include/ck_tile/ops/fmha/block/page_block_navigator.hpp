@@ -208,7 +208,10 @@ struct PageBlockBatchedPtrNavigator
         }
         else
         {
-            static_assert(false, "NOT implemented with VirtualDim == 1");
+            const index_t length              = global_window_origin.at(number<1>{});
+            const index_t num_complete_blocks = integer_divide_floor(length, page_block_size);
+            return make_multi_index(global_window_origin.at(number<0>{} /*index in hdim v*/),
+                                    length - page_block_size * num_complete_blocks);
         }
     }
 
@@ -218,11 +221,15 @@ struct PageBlockBatchedPtrNavigator
         /* local_window_origin: coord in [page_block_size, hdim]*/
         if constexpr(VirtualDim == 0)
         {
-            return make_multi_index(block_index * page_block_size + local_window_origin.at(number<0>{}), local_window_origin.at(number<1>{}));
+            return make_multi_index(block_index * page_block_size +
+                                        local_window_origin.at(number<0>{}),
+                                    local_window_origin.at(number<1>{}));
         }
         else
         {
-            static_assert(false, "NOT implemented with VirtualDim == 1");
+            return make_multi_index(local_window_origin.at(number<0>{}),
+                                    local_window_origin.at(number<1>{}) +
+                                        block_index * page_block_size);
         }
     }
 
@@ -292,7 +299,8 @@ struct PageBlockNavigator
         const WindowOrigin local_window_origin = to_local_window_origin(window_origin);
 
         auto new_tile_window = ck_tile::make_tile_window(tile_window, local_window_origin);
-        new_tile_window.set_bottom_tensor_view_data_ptr(get_block_ptr(block_index)); // lms: this means update the pointer of kv dram.
+        new_tile_window.set_bottom_tensor_view_data_ptr(
+            get_block_ptr(block_index)); // lms: this means update the pointer of kv dram.
 
         return make_tuple(block_index, new_tile_window);
     }

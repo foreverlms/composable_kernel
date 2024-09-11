@@ -288,6 +288,7 @@ struct FmhaFwdSplitKVCombineKernel
 
     CK_TILE_DEVICE void operator()(Kargs kargs) const
     {
+        // PRINT_ONLY_IN_GRID("LMS: in combine kernel!\n");
         // o_accum: [num_splits, batch_size, num_heads, max_seqlen_q, head_size]
         // lse_accum: [num_splits, batch_size, num_heads, max_seqlen_q]
         // O: [seqlen (groupmode), head_num, hdim_v]

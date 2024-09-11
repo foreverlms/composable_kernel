@@ -483,6 +483,8 @@ auto fmha_fwd_splitkv_create_kargs_and_grids(fmha_fwd_splitkv_args args)
 
     dim3 grids =
         Kernel::GridSize(args.batch, args.nhead_q, args.max_seqlen_q, args.hdim_v, args.num_splits);
+    // dim3 blocks = Kernel::BlockSize();
+    // printf("LMS: blockSize: %d, gridSize: %d, %d, %d, num_splits: %d, max_seqlen_q: %d\n", blocks.x, grids.x, grids.y, grids.z, args.num_splits, args.max_seqlen_q);
 
     return ck_tile::make_tuple(kargs, grids);
 }

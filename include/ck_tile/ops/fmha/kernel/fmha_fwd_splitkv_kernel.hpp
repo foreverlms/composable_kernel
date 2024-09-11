@@ -527,16 +527,14 @@ struct FmhaFwdSplitKVKernel
     {
         // lms: Kernel Entrance
         // allocate LDS
+        // PRINT_ONLY_IN_GRID("\nbefore allocate smem: %d\n", GetSmemSize());
         __shared__ char smem_ptr[GetSmemSize()];
         // divide problem
-        // lms: from the tiling, if kN1 is equal to hdimv, so the i_tilen will always be 0.
+        // lms: from the tiling, if kN1 is equal to hdimv, so the i_tile_n will always be 0.
         const auto [i_tile_m, i_tile_n, i_split, i_nhead, i_batch] =
             TilePartitioner{}(kargs.seqlen_q,
                               kargs.hdim_v,
                               kargs.num_splits); // lms: this is thread block level tile, not thread
-
-        // PRINT_ONLY_IN_GRID("LMS: kargs.seqlen_q: %d, num_splits: %d\n", kargs.seqlen_q,
-        // kargs.num_splits);
 
         const index_t i_m0 = __builtin_amdgcn_readfirstlane(i_tile_m * FmhaPipeline::kM0);
         const index_t i_n1 = __builtin_amdgcn_readfirstlane(i_tile_n * FmhaPipeline::kN1);
@@ -545,6 +543,7 @@ struct FmhaFwdSplitKVKernel
         long_index_t batch_offset_k    = 0;
         long_index_t batch_offset_v    = 0;
         long_index_t batch_offset_bias = 0;
+        // lse_acc: [num_splits, bs, nhead_q, seqlen_q]
         const long_index_t batch_offset_lse_acc =
             static_cast<long_index_t>(i_batch) * kargs.batch_stride_lse_acc;
         const long_index_t batch_offset_o_acc =
@@ -589,6 +588,7 @@ struct FmhaFwdSplitKVKernel
             // earlier
             if(kargs.seqlen_q <= i_m0)
             {
+                PRINT_ONLY_IN_GRID("LMS: early return: %d, i_m0: %d\n", kargs.seqlen_q, i_m0);
                 return;
             }
 
@@ -799,7 +799,7 @@ struct FmhaFwdSplitKVKernel
                 // const long_index_t nhead_offset =
                 //     static_cast<long_index_t>(i_nhead_ / kargs.nhead_ratio_qk) *
                 //     kargs.nhead_stride_v;
-                return PageBlockBatchedPtrNavigator<VDataType, 0>(
+                return PageBlockBatchedPtrNavigator<VDataType, 1>(
                     // reinterpret_cast<VDataType***>(kargs.v_batched_ptr)[i_batch_],
                     kargs.v_batched_ptr[i_batch_],
                     kargs.v_batched_offset,
@@ -1123,6 +1123,7 @@ struct FmhaFwdSplitKVKernel
             else
             {
                 // lms: FP16 will enter this branch.
+                // printf("before pipeline!\n");
                 return FmhaPipeline{}(q_dram_window,
                                       k_dram_window,
                                       k_page_block_navigator,
