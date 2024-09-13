@@ -67,6 +67,193 @@ struct TrivialPageBlockNavigator
     TensorView tensor_view;
 };
 
+template <typename DataType_, index_t VirtualDim, typename TensorView>
+struct PageBlockBatchedPtrNavigator
+{
+    using DataType = DataType_;
+    // FIXME: (lms) add this constness back.
+    // static_assert(std::is_same_v<DataType, typename TensorView::DataType>);
+    static_assert(VirtualDim == 0 || VirtualDim == 1, "only support 2d tile window");
+    using WindowOrigin = multi_index<2>;
+
+    // KV page has shape: [layers, nhead, page_block_size, hdim_v]
+    // local window size: [page_block_size, hdim_v]
+    CK_TILE_HOST_DEVICE constexpr PageBlockBatchedPtrNavigator(
+        void** kv_cache_batched_ptrs_,
+        long_index_t batch_offset_, // layer offset
+        long_index_t nhead_offset_,
+        index_t page_block_size_,
+        long_index_t row_stride_, // stride_seq
+        index_t num_blocks_,
+        const TensorView& complete_view_,
+        const TensorView& last_view_)
+        : kv_cache_batched_ptrs(reinterpret_cast<DataType**>(kv_cache_batched_ptrs_)),
+          // : kv_cache_batched_ptrs(kv_cache_batched_ptrs_),
+          batch_offset(batch_offset_),
+          nhead_offset(nhead_offset_),
+          page_block_size(page_block_size_),
+          row_stride(row_stride_),
+          num_blocks(num_blocks_),
+          complete_view(complete_view_),
+          last_view(last_view_)
+    {
+    }
+
+    template <typename WindowLengths>
+    CK_TILE_HOST_DEVICE auto make_tile_window(const WindowLengths& window_lengths,
+                                              const WindowOrigin& window_origin) const
+    {
+        const index_t block_index              = get_block_index(window_origin);
+        const WindowOrigin local_window_origin = to_local_window_origin(window_origin);
+
+        auto new_tile_window =
+            ck_tile::make_tile_window(is_last_block(block_index) ? last_view : complete_view,
+                                      window_lengths,
+                                      local_window_origin);
+        new_tile_window.set_bottom_tensor_view_data_ptr(get_block_ptr(block_index));
+
+        return make_tuple(block_index, new_tile_window);
+    }
+
+    template <typename WindowLengths, typename TileDistribution>
+    CK_TILE_HOST_DEVICE auto make_tile_window(const WindowLengths& window_lengths,
+                                              const WindowOrigin& window_origin,
+                                              const TileDistribution& tile_distribution) const
+    {
+        const index_t block_index              = get_block_index(window_origin);
+        const WindowOrigin local_window_origin = to_local_window_origin(window_origin);
+
+        auto new_tile_window =
+            ck_tile::make_tile_window(is_last_block(block_index) ? last_view : complete_view,
+                                      window_lengths,
+                                      local_window_origin,
+                                      tile_distribution);
+        new_tile_window.set_bottom_tensor_view_data_ptr(get_block_ptr(block_index));
+
+        return make_tuple(block_index, new_tile_window);
+    }
+
+    template <typename TileWindow>
+    CK_TILE_HOST_DEVICE index_t
+    move_tile_window(index_t block_index,
+                     TileWindow& tile_window,
+                     const typename remove_cvref_t<TileWindow>::BottomTensorIndex& step) const
+    {
+        ck_tile::move_tile_window(tile_window, step);
+
+        const WindowOrigin global_window_origin =
+            to_global_window_origin(block_index, tile_window.get_window_origin());
+        const WindowOrigin local_window_origin = to_local_window_origin(global_window_origin);
+
+        const index_t new_block_index = get_block_index(global_window_origin);
+        /// TODO: only update necessary attributes
+        tile_window.bottom_tensor_view_.desc_ =
+            (is_last_block(new_block_index) ? last_view : complete_view).get_tensor_descriptor();
+        tile_window.set_window_origin(local_window_origin);
+        tile_window.set_bottom_tensor_view_data_ptr(get_block_ptr(new_block_index));
+
+        return new_block_index;
+    }
+
+    CK_TILE_HOST_DEVICE bool is_last_block(index_t block_index) const
+    {
+        return block_index == num_blocks - 1;
+    }
+
+    template <typename TileWindow>
+    CK_TILE_HOST_DEVICE bool is_cross_block(index_t block_index,
+                                            const TileWindow& tile_window) const
+    {
+        const index_t origin = tile_window.get_window_origin().at(number<VirtualDim>{});
+        const index_t length = tile_window.get_window_lengths().at(number<VirtualDim>{});
+        return (block_index < num_blocks - 1) && (page_block_size < origin + length);
+    }
+
+    template <typename TileWindow>
+    CK_TILE_HOST_DEVICE void
+    move_to_block(index_t block_index, TileWindow& tile_window, index_t new_block_index) const
+    {
+        const multi_index<2> step = [&]() {
+            const index_t origin_diff = (block_index - new_block_index) * page_block_size;
+            if constexpr(VirtualDim == 0)
+            {
+                return make_multi_index(origin_diff, 0);
+            }
+            else
+            {
+                return make_multi_index(0, origin_diff);
+            }
+        }();
+
+        /// TODO: only update necessary attributes
+        tile_window.bottom_tensor_view_.desc_ =
+            (is_last_block(new_block_index) ? last_view : complete_view).get_tensor_descriptor();
+        tile_window.set_window_origin(tile_window.get_window_origin() + step);
+        tile_window.set_bottom_tensor_view_data_ptr(get_block_ptr(new_block_index));
+    }
+
+    CK_TILE_HOST_DEVICE WindowOrigin
+    to_local_window_origin(const WindowOrigin& global_window_origin) const
+    {
+        if constexpr(VirtualDim == 0)
+        {
+            const index_t length              = global_window_origin.at(number<0>{});
+            const index_t num_complete_blocks = integer_divide_floor(length, page_block_size);
+            return make_multi_index(length - page_block_size * num_complete_blocks,
+                                    global_window_origin.at(number<1>{}));
+        }
+        else
+        {
+            const index_t length              = global_window_origin.at(number<1>{});
+            const index_t num_complete_blocks = integer_divide_floor(length, page_block_size);
+            return make_multi_index(global_window_origin.at(number<0>{}),
+                                    length - page_block_size * num_complete_blocks);
+        }
+    }
+
+    CK_TILE_HOST_DEVICE WindowOrigin
+    to_global_window_origin(index_t block_index, const WindowOrigin& local_window_origin) const
+    {
+        if constexpr(VirtualDim == 0)
+        {
+            return make_multi_index(block_index * page_block_size +
+                                        local_window_origin.at(number<0>{}),
+                                    local_window_origin.at(number<1>{}));
+        }
+        else
+        {
+            return make_multi_index(local_window_origin.at(number<0>{}),
+                                    block_index * page_block_size +
+                                        local_window_origin.at(number<1>{}));
+        }
+    }
+
+    private:
+    CK_TILE_HOST_DEVICE
+    DataType* get_block_ptr(index_t block_index) const
+    {
+        // lms: cached block of sequence has shape [n_layer, nheads, block_size, head_dim]
+        // returns the `block_index` block ptr of head i.
+        return kv_cache_batched_ptrs[block_index /*paged index*/] + batch_offset /*layer offse*/ +
+               nhead_offset /* head_offset*/;
+    }
+
+    CK_TILE_HOST_DEVICE int32_t get_block_index(const WindowOrigin& global_window_origin) const
+    {
+        return integer_divide_floor(global_window_origin.at(number<VirtualDim>{}), page_block_size);
+    }
+
+    DataType** kv_cache_batched_ptrs;
+    long_index_t batch_offset;
+    long_index_t nhead_offset;
+    index_t page_block_size;
+    long_index_t row_stride;
+    index_t num_blocks;
+
+    TensorView complete_view;
+    TensorView last_view;
+};
+
 // default page-block navigator, assume that tensor view size is same as page-block size or smaller
 // if tile window on last page-block
 template <typename DataType_, index_t VirtualDim, typename TensorView>
@@ -254,6 +441,26 @@ template <typename TensorView>
 CK_TILE_HOST_DEVICE auto make_page_block_navigator(const TensorView& tensor_view)
 {
     return TrivialPageBlockNavigator<TensorView>(tensor_view);
+}
+
+template <typename DataType, index_t VirtualDim, typename TensorView>
+CK_TILE_HOST_DEVICE auto make_page_batchedptr_navigator(void** kv_cache_batched_ptrs_,
+                                                   long_index_t batch_offset_, // layer offset
+                                                   long_index_t nhead_offset_,
+                                                   index_t page_block_size_,
+                                                   long_index_t row_stride_, // stride_seq
+                                                   index_t num_blocks_,
+                                                   const TensorView& complete_view_,
+                                                   const TensorView& last_view_)
+{
+    return PageBlockBatchedPtrNavigator<DataType, VirtualDim, TensorView>(kv_cache_batched_ptrs_,
+                                                                          batch_offset_,
+                                                                          nhead_offset_,
+                                                                          page_block_size_,
+                                                                          row_stride_,
+                                                                          num_blocks_,
+                                                                          complete_view_,
+                                                                          last_view_);
 }
 
 template <typename DataType, index_t VirtualDim, typename TensorView>

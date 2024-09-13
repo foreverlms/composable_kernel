@@ -332,12 +332,18 @@ struct FmhaFwdSplitKVCombineKernel
                 // get starting offset for each batch
                 const long_index_t query_start = kargs.seqstart_q_ptr[i_batch];
 
-                batch_offset_o = query_start * kargs.row_stride_o;
-                //FIXME: (lms) add batch_stride_lse_acc
+                batch_offset_o = query_start * kargs.row_stride_o; // FIXME: (lms) should we batch_offset_o = batch_offset_o*xqa_ratio here?
+                batch_offset_lse_acc =
+                    static_cast<long_index_t>(i_batch) * kargs.batch_stride_lse_acc;
 
                 // get real # queries & # keys under group mode
                 const auto adjusted_seqstart_q_ptr = kargs.seqstart_q_ptr + i_batch;
                 kargs.seqlen_q = adjusted_seqstart_q_ptr[1] - adjusted_seqstart_q_ptr[0];
+
+                if(kargs.xqa_enabled)
+                {
+                    kargs.seqlen_q *= kargs.xqa_ratio;
+                }
 
                 // # of required blocks is different in each groups, terminate unnecessary blocks
                 // earlier
@@ -345,15 +351,6 @@ struct FmhaFwdSplitKVCombineKernel
                 {
                     return;
                 }
-                if(kargs.xqa_enabled)
-                {
-                    kargs.seqlen_q *= kargs.xqa_ratio;
-                }
-                // if constexpr(kXQA_enabled)
-                // {
-                //     kargs.seqlen_q *= kargs.xqa_ratio;
-                // }
-                // PRINT_ONLY_IN_GRID("LMS: kargs.seqlen_q in combine: %d\n", kargs.seqlen_q);
             }
             else
             {
@@ -435,6 +432,7 @@ struct FmhaFwdSplitKVCombineKernel
             {i_m0, i_n1});
 
         // LSE DRAM window
+        // lse: [bs, nhead, max_seqlen_q]
         auto lse_dram_window = [&, i_nhead_ = i_nhead]() {
             constexpr auto lse_dram_window_lengths = make_tuple(number<FmhaPipeline::kM0>{});
             if constexpr(kStoreLSE)

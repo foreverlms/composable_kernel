@@ -122,8 +122,8 @@ struct FmhaFwdSplitKVKernel
         ck_tile::index_t hdim_v;
 
         ck_tile::index_t num_head_q;
-        ck_tile::index_t nhead_k;
-        // for MQA/GQA, nhead could be different. This parameter is nhead_q / nhead_k
+        ck_tile::index_t num_head_k;
+        // for MQA/GQA, nhead could be different. This parameter is nhead_q / num_head_k
         // if this param is larger than 1, indicate MQA/GQA case
         ck_tile::index_t nhead_ratio_qk;
         ck_tile::index_t num_splits;
@@ -521,11 +521,13 @@ struct FmhaFwdSplitKVKernel
         const index_t i_m0 = __builtin_amdgcn_readfirstlane(i_tile_m * FmhaPipeline::kM0);
         const index_t i_n1 = __builtin_amdgcn_readfirstlane(i_tile_n * FmhaPipeline::kN1);
 
-        long_index_t batch_offset_q       = 0;
-        long_index_t batch_offset_k       = 0;
-        long_index_t batch_offset_v       = 0;
-        long_index_t batch_offset_bias    = 0;
+        long_index_t batch_offset_q    = 0;
+        long_index_t batch_offset_k    = 0;
+        long_index_t batch_offset_v    = 0;
+        long_index_t batch_offset_bias = 0;
+        // lse_acc: [num_splits, bs, nhead_q, seqlen_q]
         long_index_t batch_offset_lse_acc = 0;
+        // o_acc: [num_splits, bs, nhead_q, seqlen_q, hdim_q]
         const long_index_t batch_offset_o_acc =
             static_cast<long_index_t>(i_batch) * kargs.batch_stride_o_acc;
 
@@ -534,10 +536,6 @@ struct FmhaFwdSplitKVKernel
         {
             use_batched_ptrs = (kargs.k_batched_ptr != nullptr) && (kargs.v_batched_ptr != nullptr);
             assert(use_batched_ptrs); // FIXME: remove this constraint, using template.
-            if(use_batched_ptrs)
-            {
-                // FIXME: (lms) check the v_batched_ptr should also be non-null
-            }
         }
 
         if constexpr(kIsGroupMode)
@@ -597,18 +595,16 @@ struct FmhaFwdSplitKVKernel
 
             if(use_batched_ptrs)
             {
+                batch_offset_lse_acc =
+                    static_cast<long_index_t>(i_batch) * kargs.batch_stride_lse_acc;
                 // get starting offset for each batch
                 long_index_t query_start = kargs.seqstart_q_ptr[i_batch];
-                // const long_index_t key_start   = kargs.seqstart_k_ptr[i_batch];
-
-                // PRINT_ONLY_IN_GRID("LMS: query_start: %d, key_start: %d\n",
-                //                    static_cast<int>(query_start),
-                //                    static_cast<int>(key_start));
 
                 // if constexpr(kXQA_enabled)
                 // {
                 //     query_start *= kargs.xqa_ratio;
                 // }
+                // const long_index_t key_start   = kargs.seqstart_k_ptr[i_batch];
 
                 batch_offset_q = query_start * kargs.stride_q;
 
@@ -624,27 +620,30 @@ struct FmhaFwdSplitKVKernel
                 // }
 
                 // get real # queries & # keys under group mode
-                kargs.seqlen_q = kargs.seqstart_q_ptr[i_batch + 1] - kargs.seqstart_q_ptr[i_batch];
+                kargs.seqlen_q =
+                    kargs.seqstart_q_ptr[i_cache_batch + 1] - kargs.seqstart_q_ptr[i_cache_batch];
 
                 // # of required blocks is different in each groups, terminate unnecessary blocks
                 // earlier
-                if(kargs.seqlen_q <= i_m0)
-                {
-                    return;
-                }
+
                 if constexpr(kXQA_enabled)
                 {
                     kargs.seqlen_q *= kargs.xqa_ratio;
                 }
 
+                if(kargs.seqlen_q <= i_m0)
+                {
+                    return;
+                }
+
                 if(kargs.seqlen_k_ptr != nullptr)
                 {
-                    kargs.seqlen_k = kargs.seqlen_k_ptr[i_batch];
+                    kargs.seqlen_k = kargs.seqlen_k_ptr[i_cache_batch];
                 }
                 else
                 {
-                    kargs.seqlen_k =
-                        kargs.seqstart_k_ptr[i_batch + 1] - kargs.seqstart_k_ptr[i_batch];
+                    kargs.seqlen_k = kargs.seqstart_k_ptr[i_cache_batch + 1] -
+                                     kargs.seqstart_k_ptr[i_cache_batch];
                 }
             }
             else
@@ -781,26 +780,57 @@ struct FmhaFwdSplitKVKernel
             }
         }();
 
-        auto k_page_block_navigator = [&, i_batch_ = i_batch, i_nhead_ = i_nhead]() {
+        ck_tile::index_t head_kv;
+        // PRINT_ONLY_IN_GRID("LMS: %d, %d\n", kXQA_ready, kXQA_enabled);
+        if constexpr(kXQA_ready)
+        {
+            if constexpr(kXQA_enabled)
+            {
+                head_kv = i_nhead;
+            }
+            else
+            {
+                if(kargs.nhead_ratio_qk > 1)
+                {
+                    head_kv = i_nhead % kargs.num_head_k;
+                }
+                else
+                {
+                    head_kv =
+                        i_nhead / kargs.num_head_k +
+                        (i_nhead % kargs.num_head_k) * kargs.nhead_ratio_qk; // lms: really weird?
+                }
+            }
+        }
+        else
+        {
+            head_kv = i_nhead / kargs.nhead_ratio_qk;
+        }
+        auto k_page_block_navigator = [&, i_batch_ = i_batch, i_nhead_ = head_kv]() {
             if constexpr(kIsPagedKV)
             {
-                const auto* block_indices =
-                    reinterpret_cast<const int32_t*>(kargs.block_table_ptr) +
-                    i_batch_ * kargs.batch_stride_block_table;
+                // const auto* block_indices =
+                //     reinterpret_cast<const int32_t*>(kargs.block_table_ptr) +
+                //     i_batch_ * kargs.batch_stride_block_table;
+                // const index_t num_blocks =
+                //     integer_divide_ceil(kargs.seqlen_k, kargs.page_block_size);
+
+                // const long_index_t fixed_offset =
+                //     static_cast<long_index_t>(i_nhead_ / kargs.nhead_ratio_qk) *
+                //     kargs.nhead_stride_k;
+
                 const index_t num_blocks =
                     integer_divide_ceil(kargs.seqlen_k, kargs.page_block_size);
+                const long_index_t nhead_offset =
+                    static_cast<long_index_t>(i_nhead_) * kargs.nhead_stride_k;
 
-                const long_index_t fixed_offset =
-                    static_cast<long_index_t>(i_nhead_ / kargs.nhead_ratio_qk) *
-                    kargs.nhead_stride_k;
-
-                return make_page_block_navigator<const KDataType, 0>(
-                    kargs.k_ptr,
-                    kargs.batch_stride_k,
-                    fixed_offset,
-                    block_indices,
-                    num_blocks,
+                return make_page_batchedptr_navigator<KDataType, 0>(
+                    kargs.k_batched_ptr[i_batch_],
+                    kargs.k_batched_offset,
+                    nhead_offset,
                     kargs.page_block_size,
+                    kargs.stride_k,
+                    num_blocks,
                     k_dram,
                     make_k_dram(nullptr,
                                 kargs.seqlen_k - (num_blocks - 1) * kargs.page_block_size));
@@ -811,26 +841,31 @@ struct FmhaFwdSplitKVKernel
             }
         }();
 
-        auto v_page_block_navigator = [&, i_batch_ = i_batch, i_nhead_ = i_nhead]() {
+        auto v_page_block_navigator = [&, i_batch_ = i_batch, i_nhead_ = head_kv]() {
             if constexpr(kIsPagedKV)
             {
-                const auto* block_indices =
-                    reinterpret_cast<const int32_t*>(kargs.block_table_ptr) +
-                    i_batch_ * kargs.batch_stride_block_table;
+                // const auto* block_indices =
+                //     reinterpret_cast<const int32_t*>(kargs.block_table_ptr) +
+                //     i_batch_ * kargs.batch_stride_block_table;
+                // const index_t num_blocks =
+                //     integer_divide_ceil(kargs.seqlen_k, kargs.page_block_size);
+
+                // const long_index_t fixed_offset =
+                //     static_cast<long_index_t>(i_nhead_ / kargs.nhead_ratio_qk) *
+                //     kargs.nhead_stride_v;
+
                 const index_t num_blocks =
                     integer_divide_ceil(kargs.seqlen_k, kargs.page_block_size);
+                const long_index_t nhead_offset =
+                    static_cast<long_index_t>(i_nhead_) * kargs.nhead_stride_k;
 
-                const long_index_t fixed_offset =
-                    static_cast<long_index_t>(i_nhead_ / kargs.nhead_ratio_qk) *
-                    kargs.nhead_stride_v;
-
-                return make_page_block_navigator<const VDataType, 1>(
-                    kargs.v_ptr,
-                    kargs.batch_stride_v,
-                    fixed_offset,
-                    block_indices,
-                    num_blocks,
+                return make_page_batchedptr_navigator<VDataType, 1>(
+                    kargs.v_batched_ptr[i_batch_],
+                    kargs.v_batched_offset,
+                    nhead_offset,
                     kargs.page_block_size,
+                    kargs.stride_v,
+                    num_blocks,
                     v_dram,
                     make_v_dram(nullptr,
                                 kargs.seqlen_k - (num_blocks - 1) * kargs.page_block_size));

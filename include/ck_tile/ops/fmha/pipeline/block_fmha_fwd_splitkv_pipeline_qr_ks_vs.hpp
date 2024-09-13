@@ -50,6 +50,9 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
     static constexpr bool kStoreLSE        = true; // always store LSE (acc)
     static constexpr bool kIsPagedKV       = Problem::kIsPagedKV;
     static constexpr bool kHasUnevenSplits = Problem::kHasUnevenSplits;
+    static constexpr bool kXQA_ready       = Problem::kXQA_ready;
+    static constexpr bool kXQA_ENABLED     = Problem::kXQA_enabled;
+    // static constexpr bool IsMasking        = kXQA_ENABLED ? false : FmhaMask::IsMasking;
 
     // last dimension vector length used to create tensor view(and decide buffer_load vector length)
     // ... together with tensor distribution. tensor dist should able to overwrite this
@@ -419,7 +422,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
                                                            k_origin.at(number<0>{}),
                                                            number<kM0>{},
                                                            number<kN0>{});
-                if(need_perpixel_check)
+                if(need_perpixel_check && !kXQA_ENABLED)
                 {
                     set_tile_if(
                         s_acc, -numeric<SMPLComputeDataType>::infinity(), [&](auto tile_idx) {
@@ -448,8 +451,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
             static const auto get_validated_m = [](SMPLComputeDataType raw_m) {
                 /// NOTICE: bias might be materialized mask including -inf values, need
                 /// consideration
-                if constexpr(BiasEnum == BlockAttentionBiasEnum::ELEMENTWISE_BIAS ||
-                             FmhaMask::IsMasking)
+                if constexpr(BiasEnum == BlockAttentionBiasEnum::ELEMENTWISE_BIAS || FmhaMask::IsMasking)
                 {
                     return raw_m == -numeric<SMPLComputeDataType>::infinity()
                                ? type_convert<SMPLComputeDataType>(0.f)

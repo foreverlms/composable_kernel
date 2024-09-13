@@ -98,6 +98,9 @@ struct BlockFmhaFwdSplitKVPipelineProblem
     static constexpr bool kIsPagedKV        = Traits::kIsPagedKV;
     static constexpr bool kHasUnevenSplits  = kIsGroupMode || Traits::kHasUnevenSplits;
     static constexpr index_t kBlockPerCu    = Traits::kBlockPerCu;
+
+    static constexpr bool kXQA_ready   = Traits::kXQA_ready;
+    static constexpr bool kXQA_enabled = Traits::kXQA_enabled;
 };
 
 template <typename LSEDataType_,
@@ -129,6 +132,9 @@ struct BlockFmhaSplitKVCombinePipelineProblem
     static constexpr bool kDoFp8StaticQuant = Traits::kDoFp8StaticQuant;
     static constexpr index_t kBlockPerCu    = Traits::kBlockPerCu;
     static constexpr index_t kMaxSplits     = Traits::kMaxSplits;
+
+    static constexpr bool kXQA_ready   = Traits::kXQA_ready;
+    static constexpr bool kXQA_enabled = Traits::kXQA_enabled;
 };
 
 template <typename QDataType_,

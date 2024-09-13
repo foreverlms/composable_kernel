@@ -261,10 +261,10 @@ class FmhaFwdAppendKVKernel:
 def get_fmha_fwd_appendkv_tile_dict_from_dtype(dtype : str) -> Optional[dict]:
     if dtype == 'fp16' or dtype == 'bf16':
         return {
-            '32'  : FmhaFwdAppendKVTileSize(64, 64,  32,  32, -1),
-            '64'  : FmhaFwdAppendKVTileSize(64, 64,  64,  64, -1),
+            # '32'  : FmhaFwdAppendKVTileSize(64, 64,  32,  32, -1),
+            # '64'  : FmhaFwdAppendKVTileSize(64, 64,  64,  64, -1),
             '128' : FmhaFwdAppendKVTileSize(64, 64, 128, 128, -1),
-            '256' : FmhaFwdAppendKVTileSize(64, 64, 256, 256, -1),
+            # '256' : FmhaFwdAppendKVTileSize(64, 64, 256, 256, -1),
         }
     elif dtype == 'fp8' or dtype == 'bf8':
         return {
@@ -293,11 +293,11 @@ def get_fwd_appendkv_blobs(kernel_filter : Optional[str], receipt, mask_impl) ->
                     pipelines.append(FmhaFwdAppendKVPipeline(vlayout, 'f', 't', 'f', 'f', 'no', pagedkv))
                     pipelines.append(FmhaFwdAppendKVPipeline(vlayout, 't', 't', 't', 't', 'no', pagedkv))
 
-                    pipelines.append(FmhaFwdAppendKVPipeline(vlayout, 'f', 't', 't', 'f', 'inter', pagedkv))
-                    pipelines.append(FmhaFwdAppendKVPipeline(vlayout, 't', 't', 't', 't', 'inter', pagedkv))
+                    # pipelines.append(FmhaFwdAppendKVPipeline(vlayout, 'f', 't', 't', 'f', 'inter', pagedkv))
+                    # pipelines.append(FmhaFwdAppendKVPipeline(vlayout, 't', 't', 't', 't', 'inter', pagedkv))
 
-                    pipelines.append(FmhaFwdAppendKVPipeline(vlayout, 'f', 't', 't', 'f', 'half', pagedkv))
-                    pipelines.append(FmhaFwdAppendKVPipeline(vlayout, 't', 't', 't', 't', 'half', pagedkv))
+                    # pipelines.append(FmhaFwdAppendKVPipeline(vlayout, 'f', 't', 't', 'f', 'half', pagedkv))
+                    # pipelines.append(FmhaFwdAppendKVPipeline(vlayout, 't', 't', 't', 't', 'half', pagedkv))
         elif dtype in ['fp8', 'bf8']:
             # rope/paged-kv is not supported
             pipelines.append(FmhaFwdAppendKVPipeline('col', 't', 't', 't', 't', 'no', 'f'))

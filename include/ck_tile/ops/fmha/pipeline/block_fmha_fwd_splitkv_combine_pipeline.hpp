@@ -110,6 +110,14 @@ struct BlockFmhaFwdSplitKVCombinePipeline
                index_t max_seqlen_q,
                void* smem_ptr) const
     {
+        auto o_acc_dist = Policy::template MakeOaccDramTileDistribution<Problem>();
+        auto o_acc_dram_window =
+            make_tile_window(o_acc_dram_block_window_tmp.get_bottom_tensor_view(),
+                             o_acc_dram_block_window_tmp.get_window_lengths(),
+                             o_acc_dram_block_window_tmp.get_window_origin(),
+                             o_acc_dist);
+        auto o_acc = make_static_distributed_tensor<OaccDataType>(o_acc_dist);
+
         // lse_acc tile in LDS
         LSEDataType* lse_acc_lds_ptr =
             static_cast<LSEDataType*>(static_cast<void*>(static_cast<char*>(smem_ptr)));
@@ -134,6 +142,7 @@ struct BlockFmhaFwdSplitKVCombinePipeline
         auto lse_acc_tile = load_tile(lse_acc_dram_window);
         store_tile(lse_acc_lds_write_window, lse_acc_tile);
         block_sync_lds();
+        
 
         auto lse_accum = make_static_distributed_tensor<LSEDataType>(
             Policy::template MakeLSEaccRegTileDistribution<Problem>());
@@ -213,6 +222,8 @@ struct BlockFmhaFwdSplitKVCombinePipeline
             });
         }
 
+        // lms: return here no crash
+
         // store the lse scales in shared memory.
         {
             constexpr auto spans = decltype(lse_accum)::get_distributed_spans();
@@ -237,7 +248,10 @@ struct BlockFmhaFwdSplitKVCombinePipeline
         }
         block_sync_lds();
 
+        // lms: return here no crash
+
         if constexpr(kStoreLSE)
+        // if constexpr(false)
         {
             constexpr auto spans = decltype(lse_logsum)::get_distributed_spans();
             sweep_tile_span(spans[number<0>{}], [&](auto idx0) {
@@ -252,13 +266,14 @@ struct BlockFmhaFwdSplitKVCombinePipeline
             store_tile(lse_dram_window_tmp, tile_elementwise_in(lse_element_func, lse_logsum));
         }
 
-        auto o_acc_dist = Policy::template MakeOaccDramTileDistribution<Problem>();
-        auto o_acc_dram_window =
-            make_tile_window(o_acc_dram_block_window_tmp.get_bottom_tensor_view(),
-                             o_acc_dram_block_window_tmp.get_window_lengths(),
-                             o_acc_dram_block_window_tmp.get_window_origin(),
-                             o_acc_dist);
-        auto o_acc = make_static_distributed_tensor<OaccDataType>(o_acc_dist);
+        // lms: return here crash
+        // auto o_acc_dist = Policy::template MakeOaccDramTileDistribution<Problem>();
+        // auto o_acc_dram_window =
+        //     make_tile_window(o_acc_dram_block_window_tmp.get_bottom_tensor_view(),
+        //                      o_acc_dram_block_window_tmp.get_window_lengths(),
+        //                      o_acc_dram_block_window_tmp.get_window_origin(),
+        //                      o_acc_dist);
+        // auto o_acc = make_static_distributed_tensor<OaccDataType>(o_acc_dist);
         clear_tile(o_acc);
 
         const index_t padded_max_seqlen_q = integer_divide_ceil(max_seqlen_q, kM0) * kM0;
