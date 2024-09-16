@@ -600,36 +600,18 @@ struct FmhaFwdSplitKVKernel
                 // get starting offset for each batch
                 long_index_t query_start = kargs.seqstart_q_ptr[i_batch];
 
+                kargs.seqlen_q = kargs.seqstart_q_ptr[i_batch + 1] - kargs.seqstart_q_ptr[i_batch];
+
                 if constexpr(kXQA_enabled)
                 {
                     query_start *= kargs.xqa_ratio;
-                }
-                // const long_index_t key_start   = kargs.seqstart_k_ptr[i_batch];
-
-                batch_offset_q = query_start * kargs.stride_q;
-
-                // batch_offset_k = key_start * kargs.stride_k;
-
-                // if constexpr(std::is_same_v<VLayout, ck_tile::tensor_layout::gemm::RowMajor>)
-                // {
-                //     batch_offset_v = key_start * kargs.stride_v;
-                // }
-                // else
-                // {
-                //     batch_offset_v = key_start;
-                // }
-
-                // get real # queries & # keys under group mode
-                kargs.seqlen_q = kargs.seqstart_q_ptr[i_batch + 1] - kargs.seqstart_q_ptr[i_batch];
-
-                // # of required blocks is different in each groups, terminate unnecessary blocks
-                // earlier
-
-                if constexpr(kXQA_enabled)
-                {
                     kargs.seqlen_q *= kargs.xqa_ratio;
                 }
 
+                batch_offset_q = query_start * kargs.stride_q;
+
+                // # of required blocks is different in each groups, terminate unnecessary blocks
+                // earlier
                 if(kargs.seqlen_q <= i_m0)
                 {
                     return;
