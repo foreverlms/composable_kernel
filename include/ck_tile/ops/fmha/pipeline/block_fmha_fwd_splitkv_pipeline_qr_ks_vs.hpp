@@ -52,7 +52,8 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
     static constexpr bool kHasUnevenSplits = Problem::kHasUnevenSplits;
     static constexpr bool kXQA_ready       = Problem::kXQA_ready;
     static constexpr bool kXQA_ENABLED     = Problem::kXQA_enabled;
-    // static constexpr bool IsMasking        = kXQA_ENABLED ? false : FmhaMask::IsMasking;
+    static constexpr bool IsMasking        = kXQA_ENABLED ? false : FmhaMask::IsMasking;
+    // static constexpr bool IsMasking = FmhaMask::IsMasking;
 
     // last dimension vector length used to create tensor view(and decide buffer_load vector length)
     // ... together with tensor distribution. tensor dist should able to overwrite this
@@ -215,8 +216,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
         const auto [seqlen_k_start, seqlen_k_end] = mask.GetTileRangeAlongX(
             q_origin.at(number<0>{}), number<kM0>{}, number<kN0>{}, num_splits, i_split);
 
-        // check early exit if masked and no work to do.
-        if constexpr(FmhaMask::IsMasking || kHasUnevenSplits)
+        if constexpr(IsMasking || kHasUnevenSplits)
         {
             const index_t original_num_total_loop =
                 integer_divide_ceil(seqlen_k_end - seqlen_k_start, kN0);
@@ -414,7 +414,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
                             });
             }
 
-            if constexpr(kPadSeqLenK || FmhaMask::IsMasking)
+            if constexpr(kPadSeqLenK || IsMasking)
             {
                 const auto k_origin = k_page_block_navigator.to_global_window_origin(
                     i_page_block_k, k_dram_block_window.get_window_origin());
@@ -451,7 +451,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
             static const auto get_validated_m = [](SMPLComputeDataType raw_m) {
                 /// NOTICE: bias might be materialized mask including -inf values, need
                 /// consideration
-                if constexpr(BiasEnum == BlockAttentionBiasEnum::ELEMENTWISE_BIAS || FmhaMask::IsMasking)
+                if constexpr(BiasEnum == BlockAttentionBiasEnum::ELEMENTWISE_BIAS || IsMasking)
                 {
                     return raw_m == -numeric<SMPLComputeDataType>::infinity()
                                ? type_convert<SMPLComputeDataType>(0.f)
@@ -618,7 +618,7 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
         sweep_tile_span(o_spans[number<0>{}], [&](auto idx0) {
             constexpr auto i_idx = make_tuple(idx0);
             const auto tmp       = [&]() {
-                if constexpr(FmhaMask::IsMasking)
+                if constexpr(IsMasking)
                 {
                     return l[i_idx] == 0.f ? 0.f : 1 / l[i_idx];
                 }
@@ -632,6 +632,10 @@ struct BlockFmhaFwdSplitKVPipelineQRKSVS
         });
 
         o_acc = tile_elementwise_in(o_acc_element_func, o_acc);
+
+        // const auto bf      = o_acc.get_thread_buffer_size();
+        // const auto& bf_ptr = o_acc.get_thread_buffer();
+        // PRINT_ONLY_IN_GRID("LMS: %5.3f\n", fp16_to_float_hip(bf_ptr[0]));
 
         return o_acc;
     }

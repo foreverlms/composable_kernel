@@ -43,6 +43,7 @@ struct mask_info
         ck_tile::index_t y_total = seqlen_q;
         mask_info tmp;
         auto found_0 = str.find(':');
+        // b:-1,0
         if(found_0 != std::string::npos)
         {
             std::string t = str.substr(0, found_0);
@@ -91,6 +92,7 @@ struct mask_info
                 }
                 else if(t == "b")
                 {
+                    // FA Style
                     tmp.type = mask_enum::mask_bottom_right;
                     auto r   = ck_tile::make_generic_attention_mask_coordinates_from_lr_window(
                         v0, v1, y_total, x_total, false);
@@ -144,6 +146,11 @@ struct mask_info
                 {
                     set_causal_bottom_right();
                 }
+                // else
+                // {
+                //     set_causal_bottom_right();
+                //     tmp.type = mask_enum::no_mask;
+                // }
             }
         }
         return tmp;

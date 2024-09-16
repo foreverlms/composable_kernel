@@ -142,7 +142,6 @@ struct BlockFmhaFwdSplitKVCombinePipeline
         auto lse_acc_tile = load_tile(lse_acc_dram_window);
         store_tile(lse_acc_lds_write_window, lse_acc_tile);
         block_sync_lds();
-        
 
         auto lse_accum = make_static_distributed_tensor<LSEDataType>(
             Policy::template MakeLSEaccRegTileDistribution<Problem>());

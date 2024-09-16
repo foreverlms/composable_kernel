@@ -9,6 +9,7 @@
 namespace ck_tile {
 
 // This pipeline is qkv all located in LDS
+// splitkv
 using BlockFmhaFwdSplitKVPipelineQRKSVSDefaultPolicy =
     BlockFmhaPipelineQXKSVSCustomPolicy</* QLoadOnce = */ true,
                                         /* AsyncCopyK = */ false,

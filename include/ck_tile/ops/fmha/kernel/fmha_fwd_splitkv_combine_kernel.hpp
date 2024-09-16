@@ -22,10 +22,10 @@ struct FmhaFwdSplitKVCombineKernel
     using OaccDataType = remove_cvref_t<typename FmhaPipeline::OaccDataType>;
     using ODataType    = remove_cvref_t<typename FmhaPipeline::ODataType>;
 
-    static constexpr bool kIsGroupMode      = FmhaPipeline::kIsGroupMode;
-    static constexpr bool kPadSeqLenQ       = FmhaPipeline::kPadSeqLenQ;
-    static constexpr bool kPadHeadDimV      = FmhaPipeline::kPadHeadDimV;
-    static constexpr bool kStoreLSE         = FmhaPipeline::kStoreLSE;
+    static constexpr bool kIsGroupMode = FmhaPipeline::kIsGroupMode;
+    static constexpr bool kPadSeqLenQ  = FmhaPipeline::kPadSeqLenQ;
+    static constexpr bool kPadHeadDimV = FmhaPipeline::kPadHeadDimV;
+    static constexpr bool kStoreLSE    = FmhaPipeline::kStoreLSE;
     static constexpr bool kDoFp8StaticQuant = FmhaPipeline::Problem::kDoFp8StaticQuant;
     static constexpr bool kXQA_enabled      = FmhaPipeline::Problem::kXQA_enabled;
     static constexpr bool kXQA_ready        = FmhaPipeline::Problem::kXQA_ready;
@@ -278,6 +278,7 @@ struct FmhaFwdSplitKVCombineKernel
         // lse_accum: [num_splits, batch_size, num_heads, max_seqlen_q]
         // O: [seqlen (groupmode), head_num, hdim_v]
         // o_tile: [kM0, hdim_v]
+        // lse: [bs, nheads, max_seqlen_q]
         // allocate LDS
         __shared__ char smem_ptr[GetSmemSize()];
 
@@ -330,9 +331,24 @@ struct FmhaFwdSplitKVCombineKernel
             if(use_batched_ptrs)
             {
                 // get starting offset for each batch
-                const long_index_t query_start = kargs.seqstart_q_ptr[i_batch];
+                // const long_index_t query_start = kargs.seqstart_q_ptr[i_batch];
 
-                batch_offset_o = query_start * kargs.row_stride_o; // FIXME: (lms) should we batch_offset_o = batch_offset_o*xqa_ratio here?
+                // batch_offset_o =
+                //     query_start * kargs.row_stride_o; // FIXME: (lms) should we batch_offset_o =
+                //                                       // batch_offset_o*xqa_ratio here?
+                // batch_offset_lse_acc =
+                //     static_cast<long_index_t>(i_batch) * kargs.batch_stride_lse_acc;
+
+                long_index_t query_start = kargs.seqstart_q_ptr[i_batch];
+
+                if(kargs.xqa_enabled)
+                {
+                    query_start *= kargs.xqa_ratio;
+                }
+
+                batch_offset_o =
+                    query_start * kargs.row_stride_o;
+
                 batch_offset_lse_acc =
                     static_cast<long_index_t>(i_batch) * kargs.batch_stride_lse_acc;
 
@@ -505,6 +521,21 @@ struct FmhaFwdSplitKVCombineKernel
                              make_tuple(number<FmhaPipeline::kM0>{}, number<FmhaPipeline::kN1>{}),
                              {i_m0, i_n1});
 
+        // const auto* lms_o = o_dram.get_buffer_view().p_data_;
+
+        // PRINT_ONLY_IN_GRID("LMS: o_data: %5.3f\n", fp16_to_float_hip(lms_o[0]));
+
+        // const auto bf_size = o_acc_tile.get_thread_buffer_size();
+        // const auto& bf_ptr = o_acc_tile.get_thread_buffer();
+        // for(int i = 0; i < bf_size; i++)
+        // {
+        //     printf("LMS: [bid: %d, bfs: %d, tid: %d, index: %d] %5.3f\n",
+        //            blockIdx.y,
+        //            (int)bf_size,
+        //            threadIdx.x,
+        //            i,
+        //            fp16_to_float_hip(bf_ptr[0]));
+        // }
         EpiloguePipeline{}(o_dram_window, o_acc_tile);
     }
 };
